@@ -1858,6 +1858,7 @@ async function saveSignalsBulk(signals) {
     .select();
   if (error) {
     console.error('批量保存 signals 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
+    toast(`信号保存失败：${error.message || '请重试'}`, 'error');
     return { saved: 0, error };
   }
   // 回填真实 uuid
@@ -1881,7 +1882,10 @@ async function updateSignalMatch(signal) {
       candidate_agency_id: signal.candidate_agency_id || null
     })
     .eq('id', signal.id);
-  if (error) console.error('更新 signal 匹配失败:', error.message);
+  if (error) {
+    console.error('更新 signal 匹配失败:', error.message);
+    toast(`匹配结果未能同步：${error.message || '请重试'}`, 'error');
+  }
 }
 
 // 保存单个机构（upsert，按 id 冲突时更新）
@@ -1911,6 +1915,7 @@ async function saveAgencyToSupabase(a) {
     .single();
   if (error) {
     console.error('保存 agency 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code, '| payload:', payload);
+    toast(`云端保存失败：${a.company_name} · ${error.message || '请重试'}`, 'error');
     return null;
   }
   return data;
@@ -1950,6 +1955,7 @@ async function saveAgenciesBulk(agencies) {
     .select();
   if (error) {
     console.error('批量保存失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
+    toast(`云端批量保存失败：${error.message || '请重试'}`, 'error');
     return { saved: 0, error };
   }
   // 如果某些 dedupe_key 在 Supabase 已存在，Supabase 会返回已有的 id（不是我们传的本地 id）
@@ -2426,7 +2432,7 @@ function isCrossPlatformAgency(agency){
 
 function getAgencyStatus(agency){
   const n=(state.matches.get(agency.id)||[]).length;
-  if(n>=2)return 'hot';
+  if(n>=HOT_SIGNAL_THRESHOLD)return 'hot';
   if(n===1)return 'warm';
   return 'cold';
 }
@@ -2443,6 +2449,9 @@ const LIFECYCLE_STAGES={
   dnc:{label:'Do Not Contact',desc:'黑名单 · 永不联系',icon:'⊘',canContact:false}
 };
 const COOLDOWN_DAYS=14;
+// 判定为"Hot"的信号数阈值：一家机构被 >= 这个数量的招聘信号覆盖即为 Hot Lead
+const HOT_SIGNAL_THRESHOLD=2;
+// Warm 是 1 个信号的过渡状态，<1 为 cold
 
 function getLifecycle(a){return a.lifecycle_stage||'cold'}
 function canContactAgency(a){
@@ -4738,6 +4747,7 @@ async function enrichAllHot(){
 }
 
 function exportDB(){
+  if(state.currentRole==='bdr'){toast('BDR 角色无权导出数据库，请联系管理员','error');return}
   if(state.agencies.length===0){toast('无数据','error');return}
   const headers=['company_name','phone','city','county','address','license_number','license_type','issue_date','source','notes','lifecycle_stage','owner','last_contacted_at','signal_count','status','score'];
   const rows=state.agencies.map(a=>{
@@ -4755,6 +4765,7 @@ function exportDB(){
 }
 
 function exportHot(){
+  if(state.currentRole==='bdr'){toast('BDR 角色无权导出 Hot Leads 列表，请联系管理员','error');return}
   // 只导出可联系的（Hot Leads过滤后的）
   const hot=state.agencies.filter(a=>getAgencyStatus(a)==='hot'&&canContactAgency(a));
   if(hot.length===0){toast('无可联系 Hot Leads','error');return}
@@ -4778,6 +4789,7 @@ function exportHot(){
 }
 
 function exportProspects(){
+  if(state.currentRole==='bdr'){toast('BDR 角色无权导出 New Leads 列表，请联系管理员','error');return}
   if(state.prospects.length===0){toast('无数据','error');return}
   const sigs=state.prospects.map(id=>state.signals.find(s=>s.id===id)).filter(Boolean);
   const headers=['company_name','job_title','city','state','source','posted_date','salary'];
