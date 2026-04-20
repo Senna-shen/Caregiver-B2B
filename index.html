@@ -1972,7 +1972,12 @@ async function logActivityToSupabase(event_type, event_detail, agency_id = null)
     actor: state.currentUser,
     agency_id: agency_id  // 现在所有本地 id 都是 UUID 了
   };
-  await sb.from('activity_log').insert(payload).catch(e => console.error(e));
+  try {
+    const { error } = await sb.from('activity_log').insert(payload);
+    if (error) console.error('写入 activity_log 失败 | message:', error.message, '| details:', error.details, '| code:', error.code);
+  } catch (e) {
+    console.error('写入 activity_log 异常:', e);
+  }
 }
 
 // 初始化：从 Supabase 拉数据
