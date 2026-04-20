@@ -1740,6 +1740,12 @@ function isUUID(id){
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
+// 安全的 DOM 文本设置（目标元素不存在时静默跳过）
+function setText(id, value){
+  const el=document.getElementById(id);
+  if(el)el.textContent=value;
+}
+
 // 防抖保存：避免频繁操作时打爆 API
 const pendingSaves = new Map();  // agencyId -> timeout
 function debouncedSaveAgency(agency, delay = 500) {
@@ -1814,6 +1820,68 @@ async function loadSignalsFromSupabase() {
     matched_agency_id: row.matched_agency_id,
     candidate_agency_id: row.candidate_agency_id
   }));
+}
+
+// 批量保存信号（按 signal_key 去重 upsert）
+async function saveSignalsBulk(signals) {
+  if (!signals.length) return { saved: 0 };
+  const payloads = signals.map(s => ({
+    id: s.id,
+    company_name: s.company_name,
+    job_title: s.job_title || null,
+    city: s.city || null,
+    state: s.state || null,
+    source: s.source || null,
+    salary: s.salary || null,
+    url: s.url || null,
+    posted_date: s.posted_date || null,
+    first_seen_at: s.first_seen_at || null,
+    last_seen_at: s.last_seen_at || null,
+    signal_key: s.signal_key,
+    seen_count: s.seen_count || 1,
+    is_active: s.is_active !== false,
+    match_status: s.match_status || 'unmatched',
+    match_confidence: s.match_confidence || 0,
+    matched_agency_id: s.matched_agency_id || null,
+    candidate_agency_id: s.candidate_agency_id || null
+  }));
+  // 按 signal_key 去重（避免同批次重复）
+  const seen = new Set();
+  const dedup = payloads.filter(p => {
+    if (!p.signal_key || seen.has(p.signal_key)) return false;
+    seen.add(p.signal_key);
+    return true;
+  });
+  const { data, error } = await sb
+    .from('signals')
+    .upsert(dedup, { onConflict: 'signal_key', ignoreDuplicates: false })
+    .select();
+  if (error) {
+    console.error('批量保存 signals 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
+    return { saved: 0, error };
+  }
+  // 回填真实 uuid
+  if (data) {
+    data.forEach(row => {
+      const local = signals.find(s => s.signal_key === row.signal_key);
+      if (local && local.id !== row.id) local.id = row.id;
+    });
+  }
+  return { saved: data?.length || 0 };
+}
+
+// 更新单个 signal 的匹配结果（匹配跑完后用）
+async function updateSignalMatch(signal) {
+  const { error } = await sb
+    .from('signals')
+    .update({
+      match_status: signal.match_status,
+      match_confidence: signal.match_confidence,
+      matched_agency_id: signal.matched_agency_id || null,
+      candidate_agency_id: signal.candidate_agency_id || null
+    })
+    .eq('id', signal.id);
+  if (error) console.error('更新 signal 匹配失败:', error.message);
 }
 
 // 保存单个机构（upsert，按 id 冲突时更新）
@@ -1896,12 +1964,6 @@ async function saveAgenciesBulk(agencies) {
 }
 
 // 删除机构
-async function deleteAgencyFromSupabase(agencyId) {
-  const { error } = await sb.from('agencies').delete().eq('id', agencyId);
-  if (error) console.error('删除失败:', error);
-  return !error;
-}
-
 // 记录一条活动日志
 async function logActivityToSupabase(event_type, event_detail, agency_id = null) {
   const payload = {
@@ -2430,12 +2492,6 @@ function markContactedToday(agencyId){
   debouncedSaveAgency(a);
   logActivityToSupabase('contacted','今天联系',a.id);
 }
-function setOwner(agencyId,name){
-  const a=state.agencies.find(x=>x.id===agencyId);
-  if(!a)return;
-  a.owner=name||null;
-  debouncedSaveAgency(a);
-}
 function openLifecyclePopup(agencyId,event){
   closeLifecyclePopup();
   const a=state.agencies.find(x=>x.id===agencyId);
@@ -2463,9 +2519,9 @@ function closeLifecyclePopup(){
   document.removeEventListener('click',closeLifecyclePopupOnOutside);
 }
 function closeLifecyclePopupOnOutside(e){
-  if(!e.target.closest('.lifecycle-popup')&&!e.target.closest('.lifecycle-chip'))closeLifecyclePopup();
+  const p=document.getElementById('lifecycle-popup-active');
+  if(p&&!p.contains(e.target))closeLifecyclePopup();
 }
-
 // ============ Render ============
 function updateStats(){
   // 存量指标（累计）
@@ -2479,11 +2535,11 @@ function updateStats(){
   // 付费客户：customer + vip
   const totalCustomers=state.agencies.filter(a=>['customer','vip'].includes(getLifecycle(a))).length;
   
-  document.getElementById('stat-db').textContent=totalDb.toLocaleString();
-  document.getElementById('stat-hot').textContent=totalHot.toLocaleString();
-  document.getElementById('stat-contacted').textContent=totalContacted.toLocaleString();
-  document.getElementById('stat-in-pipeline').textContent=totalInPipeline.toLocaleString();
-  document.getElementById('stat-customers').textContent=totalCustomers.toLocaleString();
+  setText('stat-db',totalDb.toLocaleString());
+  setText('stat-hot',totalHot.toLocaleString());
+  setText('stat-contacted',totalContacted.toLocaleString());
+  setText('stat-in-pipeline',totalInPipeline.toLocaleString());
+  setText('stat-customers',totalCustomers.toLocaleString());
   
   // 今日流量（Pipeline）
   const todaySignals=state.signals.length;  // 本次抓取的所有信号
@@ -2493,16 +2549,16 @@ function updateStats(){
     getAgencyStatus(a)==='hot'&&canContactAgency(a)&&state.enriched.has(a.id)
   ).length;
   
-  document.getElementById('pipe-scrape').textContent=todaySignals;
-  document.getElementById('pipe-match').textContent=todayMatches;
-  document.getElementById('pipe-enrich').textContent=todayEnriched;
-  document.getElementById('pipe-export').textContent=todayReadyForOutreach;
+  setText('pipe-scrape',todaySignals);
+  setText('pipe-match',todayMatches);
+  setText('pipe-enrich',todayEnriched);
+  setText('pipe-export',todayReadyForOutreach);
   
   // Nav 菜单 badge
-  document.getElementById('nav-db-count').textContent=totalDb;
-  document.getElementById('nav-signals-count').textContent=state.signals.length;
-  document.getElementById('nav-hot-count').textContent=state.agencies.filter(a=>getAgencyStatus(a)==='hot'&&canContactAgency(a)).length;
-  document.getElementById('nav-prospect-count').textContent=state.prospects.length;
+  setText('nav-db-count',totalDb);
+  setText('nav-signals-count',state.signals.length);
+  setText('nav-hot-count',state.agencies.filter(a=>getAgencyStatus(a)==='hot'&&canContactAgency(a)).length);
+  setText('nav-prospect-count',state.prospects.length);
   
   if(totalDb>0){
     const origCount=state.agencies.filter(a=>(a.source||'original')==='original').length;
@@ -2512,8 +2568,9 @@ function updateStats(){
     if(origCount>0)parts.push(`${origCount} CSV`);
     if(prospectCount>0)parts.push(`${prospectCount} 发现`);
     if(manualCount>0)parts.push(`${manualCount} 手动`);
-    document.getElementById('stat-db-delta').textContent=parts.length>1?parts.join(' + '):`已导入机构`;
-    document.getElementById('stat-db-delta').className='stat-delta up';
+    setText('stat-db-delta',parts.length>1?parts.join(' + '):`已导入机构`);
+    const deltaEl=document.getElementById('stat-db-delta');
+    if(deltaEl)deltaEl.className='stat-delta up';
   }
   
   // 更新 database 页面的 sub-title 显示地理范围
@@ -2575,26 +2632,6 @@ function jobKey(s){
 }
 
 // 计算每家机构的跨平台分数（被几个源收录）
-function getCompanyPlatformStats(){
-  const activeSigs=state.signals.filter(s=>s.is_active!==false);
-  const companyPlatforms=new Map(); // normalize(company) -> Set of sources
-  const companyJobPlatforms=new Map(); // normalize(company) -> Map<jobKey, Set<source>>
-  
-  activeSigs.forEach(s=>{
-    const comp=normalize(s.company_name);
-    if(!companyPlatforms.has(comp))companyPlatforms.set(comp,new Set());
-    companyPlatforms.get(comp).add(s.source);
-    
-    if(!companyJobPlatforms.has(comp))companyJobPlatforms.set(comp,new Map());
-    const jm=companyJobPlatforms.get(comp);
-    const jk=jobKey(s);
-    if(!jm.has(jk))jm.set(jk,new Set());
-    jm.get(jk).add(s.source);
-  });
-  
-  return {companyPlatforms,companyJobPlatforms};
-}
-
 // 获取单家机构的跨平台指标（用于 Hot Leads 打分和标记）
 function getAgencyCrossPlatformScore(agency){
   const activeSigs=(state.matches.get(agency.id)||[])
@@ -3292,27 +3329,6 @@ function renderSources(){
 function toggleSource(id){const s=state.sources.find(x=>x.id===id);if(s){s.active=!s.active;renderSources()}}
 
 // ============ Clay Pipeline ============
-
-function calcWaterfallCoverage(waterfall){
-  // 计算 waterfall 累积命中率：1 - ∏(1 - p_i) for enabled services
-  const enabled=waterfall.filter(w=>w.enabled);
-  if(enabled.length===0)return 0;
-  let missRate=1;
-  enabled.forEach(w=>{missRate*=(1-w.hitRate/100)});
-  return Math.round((1-missRate)*100);
-}
-
-function calcWaterfallCost(waterfall){
-  // 期望成本：每个服务 = 进入它的概率 × 单次成本
-  const enabled=waterfall.filter(w=>w.enabled);
-  let prevMiss=1;
-  let totalCost=0;
-  enabled.forEach(w=>{
-    totalCost+=prevMiss*w.cost;
-    prevMiss*=(1-w.hitRate/100);
-  });
-  return totalCost;
-}
 
 function renderWaterfall(waterfall,containerId,colorAccent){
   const el=document.getElementById(containerId);
@@ -4442,7 +4458,7 @@ async function runScrape(){
         // 新信号 → 插入
         const newSig={
           ...raw,
-          id:'sig_'+Date.now()+'_'+Math.floor(Math.random()*1e7),
+          id:generateUUID(),
           signal_key:key,
           first_seen_at:today,
           last_seen_at:today,
@@ -4526,6 +4542,16 @@ async function runScrape(){
   if(totalRefreshed>0)toastMsg+=` · ${totalRefreshed} 条持续中（未重复计数）`;
   toast(toastMsg,'success');
   goPage('signals');
+  
+  // 同步 signals 到云端
+  if(state.signals.length>0){
+    showSyncStatus(`正在同步 ${state.signals.length} 条信号到云端…`);
+    saveSignalsBulk(state.signals).then(r=>{
+      showSyncStatus(`✓ 已同步 ${r.saved} 条信号`,'success');
+      setTimeout(()=>hideSyncStatus(),3000);
+    });
+  }
+  logActivityToSupabase('scrape',`抓取 ${totalScraped} · 新增 ${totalNew} · 持续 ${totalRefreshed}`,null);
 }
 
 function buildGeoDescription(){
