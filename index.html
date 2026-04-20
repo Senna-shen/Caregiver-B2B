@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Caregiver BDR 指挥中心</title>
+<title>Caregiver B2B · 信号驱动销售</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
   --bg:#ffffff;
@@ -1717,6 +1718,231 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
 </div>
 
 <script>
+// ============ Supabase ============
+const SUPABASE_URL = 'https://yqrfkhnzjgpicyrqyuzk.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_tMfU3u9YvgstfwRqEaiwBA__QnGufeQ';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// 防抖保存：避免频繁操作时打爆 API
+const pendingSaves = new Map();  // agencyId -> timeout
+function debouncedSaveAgency(agency, delay = 500) {
+  if (pendingSaves.has(agency.id)) clearTimeout(pendingSaves.get(agency.id));
+  pendingSaves.set(agency.id, setTimeout(() => {
+    saveAgencyToSupabase(agency).catch(e => console.error('保存失败:', e));
+    pendingSaves.delete(agency.id);
+  }, delay));
+}
+
+// ============ Supabase 操作函数 ============
+
+// 加载所有机构
+async function loadAgenciesFromSupabase() {
+  const { data, error } = await supabase
+    .from('agencies')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) { console.error('加载 agencies 失败:', error); return []; }
+  return data.map(row => ({
+    id: row.id,
+    company_name: row.company_name,
+    phone: row.phone || '',
+    city: row.city || '',
+    state: row.state || '',
+    county: row.county || '',
+    address: row.address || '',
+    license_number: row.license_number || '',
+    license_type: row.license_type || '',
+    issue_date: row.issue_date || '',
+    source: row.source || 'original',
+    notes: row.notes || '',
+    lifecycle_stage: row.lifecycle_stage || 'cold',
+    owner: row.owner,
+    last_contacted_at: row.last_contacted_at
+  }));
+}
+
+// 加载所有信号
+async function loadSignalsFromSupabase() {
+  const { data, error } = await supabase
+    .from('signals')
+    .select('*')
+    .eq('is_active', true)
+    .order('posted_date', { ascending: false })
+    .limit(500);
+  if (error) { console.error('加载 signals 失败:', error); return []; }
+  return data.map(row => ({
+    id: row.id,
+    company_name: row.company_name,
+    job_title: row.job_title || '',
+    city: row.city || '',
+    state: row.state || '',
+    source: row.source || '',
+    salary: row.salary || '',
+    url: row.url || '',
+    posted_date: row.posted_date,
+    posted_hours_ago: row.posted_date ? Math.floor((Date.now() - new Date(row.posted_date).getTime()) / 3600000) : 0,
+    signal_key: row.signal_key,
+    seen_count: row.seen_count || 1,
+    is_active: row.is_active !== false,
+    first_seen_at: row.first_seen_at,
+    last_seen_at: row.last_seen_at,
+    match_status: row.match_status || 'unmatched',
+    match_confidence: row.match_confidence || 0,
+    matched_agency_id: row.matched_agency_id,
+    candidate_agency_id: row.candidate_agency_id
+  }));
+}
+
+// 保存单个机构（upsert，按 id 冲突时更新）
+async function saveAgencyToSupabase(a) {
+  const payload = {
+    id: a.id,
+    company_name: a.company_name,
+    phone: a.phone || null,
+    city: a.city || null,
+    state: a.state || null,
+    county: a.county || null,
+    address: a.address || null,
+    license_number: a.license_number || null,
+    license_type: a.license_type || null,
+    issue_date: a.issue_date || null,
+    source: a.source || 'original',
+    notes: a.notes || null,
+    lifecycle_stage: a.lifecycle_stage || 'cold',
+    owner: a.owner || null,
+    last_contacted_at: a.last_contacted_at || null,
+    dedupe_key: makeDedupeKey(a)
+  };
+  // 演示版的 id 格式是 'agc_xxx'，Supabase 需要真正的 uuid
+  // 如果 id 不是 uuid 格式，让 Supabase 生成新的
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a.id)) {
+    delete payload.id;
+  }
+  const { data, error } = await supabase
+    .from('agencies')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
+  if (error) { console.error('保存 agency 失败:', error, payload); return null; }
+  // 如果 Supabase 生成了新的 uuid，更新本地 state 的 id
+  if (data && data.id !== a.id) {
+    a.id = data.id;
+    updateStats();
+  }
+  return data;
+}
+
+// 批量保存机构
+async function saveAgenciesBulk(agencies) {
+  if (!agencies.length) return { saved: 0 };
+  const payloads = agencies.map(a => {
+    const p = {
+      company_name: a.company_name,
+      phone: a.phone || null,
+      city: a.city || null,
+      state: a.state || null,
+      county: a.county || null,
+      address: a.address || null,
+      license_number: a.license_number || null,
+      license_type: a.license_type || null,
+      issue_date: a.issue_date || null,
+      source: a.source || 'original',
+      notes: a.notes || null,
+      lifecycle_stage: a.lifecycle_stage || 'cold',
+      owner: a.owner || null,
+      last_contacted_at: a.last_contacted_at || null,
+      dedupe_key: makeDedupeKey(a)
+    };
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a.id)) {
+      p.id = a.id;
+    }
+    return p;
+  });
+  // 按 dedupe_key 去重（以防同批次内重复）
+  const seen = new Set();
+  const dedup = payloads.filter(p => {
+    if (seen.has(p.dedupe_key)) return false;
+    seen.add(p.dedupe_key);
+    return true;
+  });
+  const { data, error } = await supabase
+    .from('agencies')
+    .upsert(dedup, { onConflict: 'dedupe_key', ignoreDuplicates: false })
+    .select();
+  if (error) { console.error('批量保存失败:', error); return { saved: 0, error }; }
+  // 回填真实 uuid 到本地 state
+  if (data) {
+    data.forEach(row => {
+      const local = agencies.find(a => makeDedupeKey(a) === row.dedupe_key);
+      if (local && local.id !== row.id) local.id = row.id;
+    });
+  }
+  return { saved: data?.length || 0 };
+}
+
+// 删除机构
+async function deleteAgencyFromSupabase(agencyId) {
+  const { error } = await supabase.from('agencies').delete().eq('id', agencyId);
+  if (error) console.error('删除失败:', error);
+  return !error;
+}
+
+// 记录一条活动日志
+async function logActivityToSupabase(event_type, event_detail, agency_id = null) {
+  const payload = {
+    event_type,
+    event_detail,
+    actor: state.currentUser,
+    agency_id: (agency_id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(agency_id)) ? agency_id : null
+  };
+  await supabase.from('activity_log').insert(payload).catch(e => console.error(e));
+}
+
+// 初始化：从 Supabase 拉数据
+async function initFromSupabase() {
+  try {
+    showSyncStatus('正在从云端加载数据…');
+    const agencies = await loadAgenciesFromSupabase();
+    if (agencies.length > 0) {
+      state.agencies = agencies;
+      console.log(`✓ 已加载 ${agencies.length} 家机构`);
+    }
+    const signals = await loadSignalsFromSupabase();
+    if (signals.length > 0) {
+      state.signals = signals;
+      // 重建 matches map
+      runMatching();
+      console.log(`✓ 已加载 ${signals.length} 条信号`);
+    }
+    updateStats();
+    if (document.querySelector('.page.active')?.dataset.page === 'database') renderDB();
+    showSyncStatus(`✓ 已同步 ${agencies.length} 家机构 · ${signals.length} 条信号`, 'success');
+    setTimeout(() => hideSyncStatus(), 3000);
+  } catch (e) {
+    console.error('初始化失败:', e);
+    showSyncStatus('⚠ 云端连接失败，使用本地数据', 'error');
+  }
+}
+
+function showSyncStatus(msg, type = 'info') {
+  let el = document.getElementById('sync-status');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'sync-status';
+    el.style.cssText = 'position:fixed;bottom:16px;right:16px;padding:8px 14px;border-radius:6px;font-size:12px;background:#1f2937;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:9999;font-family:Inter,sans-serif';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  if (type === 'success') el.style.background = '#15803d';
+  else if (type === 'error') el.style.background = '#b91c1c';
+  else el.style.background = '#1f2937';
+  el.style.display = 'block';
+}
+function hideSyncStatus() {
+  const el = document.getElementById('sync-status');
+  if (el) el.style.display = 'none';
+}
+
 // ============ State ============
 const state = {
   agencies: [],
@@ -2172,6 +2398,8 @@ function setLifecycle(agencyId,stage){
     openAgencyDetail(agencyId);
   }
   closeLifecyclePopup();
+  debouncedSaveAgency(a);
+  logActivityToSupabase('lifecycle_change',`${LIFECYCLE_STAGES[oldStage].label} → ${LIFECYCLE_STAGES[stage].label}`,a.id);
 }
 function markContactedToday(agencyId){
   const a=state.agencies.find(x=>x.id===agencyId);
@@ -2184,11 +2412,14 @@ function markContactedToday(agencyId){
     openAgencyDetail(agencyId);
   }
   toast('已标记为今天联系','success');
+  debouncedSaveAgency(a);
+  logActivityToSupabase('contacted','今天联系',a.id);
 }
 function setOwner(agencyId,name){
   const a=state.agencies.find(x=>x.id===agencyId);
   if(!a)return;
   a.owner=name||null;
+  debouncedSaveAgency(a);
 }
 function openLifecyclePopup(agencyId,event){
   closeLifecyclePopup();
@@ -2839,6 +3070,16 @@ function saveManualAdd(){
   
   // 光标回到公司名
   document.getElementById('ma-company').focus();
+  
+  // 同步到 Supabase
+  saveAgencyToSupabase(newAgency).then(()=>{
+    showSyncStatus(`✓ 已同步 ${company} 到云端`,'success');
+    setTimeout(()=>hideSyncStatus(),2000);
+  }).catch(e=>{
+    console.error('同步失败:',e);
+    showSyncStatus('⚠ 同步失败，检查控制台','error');
+  });
+  logActivityToSupabase('manual_add',`手动录入 (${sourceLabel})`,newAgency.id);
 }
 
 // Enter 键快速保存
@@ -3269,6 +3510,8 @@ function claimLead(agencyId){
     openAgencyDetail(agencyId);
   }
   toast(`已认领 ${a.company_name}`,'success');
+  debouncedSaveAgency(a);
+  logActivityToSupabase('claimed',`${state.currentUser} 认领`,a.id);
 }
 
 function releaseLead(agencyId){
@@ -3284,6 +3527,8 @@ function releaseLead(agencyId){
     openAgencyDetail(agencyId);
   }
   toast(`已释放 ${a.company_name}`,'success');
+  debouncedSaveAgency(a);
+  logActivityToSupabase('released',`原 @${oldOwner} 释放`,a.id);
 }
 
 function renderHotList(){
@@ -3654,9 +3899,11 @@ function goPage(name){
 // ============ Actions ============
 function loadSampleData(){
   const samples=generateSampleAgencies(150);
+  let newlyAdded=[];
   
   if(state.agencies.length===0){
     state.agencies=samples;
+    newlyAdded=samples;
     logActivity(`✓ 加载样本机构 150 条`);
   }else{
     const existingMap=new Map();
@@ -3664,13 +3911,22 @@ function loadSampleData(){
     let added=0,kept=0;
     samples.forEach(s=>{
       if(existingMap.has(makeDedupeKey(s)))kept++;
-      else{state.agencies.push(s);added++}
+      else{state.agencies.push(s);newlyAdded.push(s);added++}
     });
     logActivity(`✓ 加载样本: 新增 ${added}, 保留 ${kept}`);
   }
   updateStats();
   renderDB();
-  toast('样本数据已加载','success');
+  toast('样本数据已加载，正在同步云端…','success');
+  
+  // 异步同步到 Supabase
+  if(newlyAdded.length>0){
+    showSyncStatus(`正在上传 ${newlyAdded.length} 条到云端…`);
+    saveAgenciesBulk(newlyAdded).then(r=>{
+      showSyncStatus(`✓ 已同步 ${r.saved} 条到云端`,'success');
+      setTimeout(()=>hideSyncStatus(),3000);
+    });
+  }
 }
 
 async function handleCSV(file){
@@ -3893,6 +4149,16 @@ function doImportCSV(lines,headers){
   renderDB();
   toast(`追加完成：新增 ${added} 条${kept>0?`，保留 ${kept} 条原记录`:''}`,'success');
   goPage('database');
+  
+  // 异步同步到 Supabase
+  if(added>0){
+    const newlyAdded=state.agencies.slice(-added);
+    showSyncStatus(`正在上传 ${added} 条到云端…`);
+    saveAgenciesBulk(newlyAdded).then(r=>{
+      showSyncStatus(`✓ 已同步 ${r.saved} 条到云端`,'success');
+      setTimeout(()=>hideSyncStatus(),3000);
+    });
+  }
 }
 
 function makeDedupeKey(a){
@@ -4850,6 +5116,9 @@ initUserSwitcher();
 initRoleSwitcher();
 applyRolePermissions();
 logActivity('系统启动');
+
+// 启动后从 Supabase 加载真实数据
+initFromSupabase();
 </script>
 </body>
 </html>
