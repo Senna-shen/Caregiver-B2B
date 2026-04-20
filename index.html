@@ -1721,7 +1721,24 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
 // ============ Supabase ============
 const SUPABASE_URL = 'https://yqrfkhnzjgpicyrqyuzk.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_ICw2Q4iST8Iv9ecDtYtDqw_i52GHL4-';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// UUID 生成器（现代浏览器原生支持；老浏览器走 fallback）
+function generateUUID(){
+  if(typeof crypto!=='undefined'&&crypto.randomUUID){
+    return crypto.randomUUID();
+  }
+  // Fallback for older browsers
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){
+    const r=Math.random()*16|0,v=c==='x'?r:(r&0x3|0x8);
+    return v.toString(16);
+  });
+}
+
+// UUID 格式校验
+function isUUID(id){
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
 
 // 防抖保存：避免频繁操作时打爆 API
 const pendingSaves = new Map();  // agencyId -> timeout
@@ -1737,11 +1754,14 @@ function debouncedSaveAgency(agency, delay = 500) {
 
 // 加载所有机构
 async function loadAgenciesFromSupabase() {
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('agencies')
     .select('*')
     .order('created_at', { ascending: false });
-  if (error) { console.error('加载 agencies 失败:', error); return []; }
+  if (error) {
+    console.error('加载 agencies 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
+    return [];
+  }
   return data.map(row => ({
     id: row.id,
     company_name: row.company_name,
@@ -1763,13 +1783,16 @@ async function loadAgenciesFromSupabase() {
 
 // 加载所有信号
 async function loadSignalsFromSupabase() {
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('signals')
     .select('*')
     .eq('is_active', true)
     .order('posted_date', { ascending: false })
     .limit(500);
-  if (error) { console.error('加载 signals 失败:', error); return []; }
+  if (error) {
+    console.error('加载 signals 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
+    return [];
+  }
   return data.map(row => ({
     id: row.id,
     company_name: row.company_name,
@@ -1813,64 +1836,56 @@ async function saveAgencyToSupabase(a) {
     last_contacted_at: a.last_contacted_at || null,
     dedupe_key: makeDedupeKey(a)
   };
-  // 演示版的 id 格式是 'agc_xxx'，Supabase 需要真正的 uuid
-  // 如果 id 不是 uuid 格式，让 Supabase 生成新的
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a.id)) {
-    delete payload.id;
-  }
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('agencies')
     .upsert(payload, { onConflict: 'id' })
     .select()
     .single();
-  if (error) { console.error('保存 agency 失败:', error, payload); return null; }
-  // 如果 Supabase 生成了新的 uuid，更新本地 state 的 id
-  if (data && data.id !== a.id) {
-    a.id = data.id;
-    updateStats();
+  if (error) {
+    console.error('保存 agency 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code, '| payload:', payload);
+    return null;
   }
   return data;
 }
 
-// 批量保存机构
+// 批量保存机构（按 dedupe_key 去重 upsert）
 async function saveAgenciesBulk(agencies) {
   if (!agencies.length) return { saved: 0 };
-  const payloads = agencies.map(a => {
-    const p = {
-      company_name: a.company_name,
-      phone: a.phone || null,
-      city: a.city || null,
-      state: a.state || null,
-      county: a.county || null,
-      address: a.address || null,
-      license_number: a.license_number || null,
-      license_type: a.license_type || null,
-      issue_date: a.issue_date || null,
-      source: a.source || 'original',
-      notes: a.notes || null,
-      lifecycle_stage: a.lifecycle_stage || 'cold',
-      owner: a.owner || null,
-      last_contacted_at: a.last_contacted_at || null,
-      dedupe_key: makeDedupeKey(a)
-    };
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a.id)) {
-      p.id = a.id;
-    }
-    return p;
-  });
-  // 按 dedupe_key 去重（以防同批次内重复）
+  const payloads = agencies.map(a => ({
+    id: a.id,
+    company_name: a.company_name,
+    phone: a.phone || null,
+    city: a.city || null,
+    state: a.state || null,
+    county: a.county || null,
+    address: a.address || null,
+    license_number: a.license_number || null,
+    license_type: a.license_type || null,
+    issue_date: a.issue_date || null,
+    source: a.source || 'original',
+    notes: a.notes || null,
+    lifecycle_stage: a.lifecycle_stage || 'cold',
+    owner: a.owner || null,
+    last_contacted_at: a.last_contacted_at || null,
+    dedupe_key: makeDedupeKey(a)
+  }));
+  // 按 dedupe_key 去重（防同批次重复）
   const seen = new Set();
   const dedup = payloads.filter(p => {
     if (seen.has(p.dedupe_key)) return false;
     seen.add(p.dedupe_key);
     return true;
   });
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('agencies')
     .upsert(dedup, { onConflict: 'dedupe_key', ignoreDuplicates: false })
     .select();
-  if (error) { console.error('批量保存失败:', error); return { saved: 0, error }; }
-  // 回填真实 uuid 到本地 state
+  if (error) {
+    console.error('批量保存失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
+    return { saved: 0, error };
+  }
+  // 如果某些 dedupe_key 在 Supabase 已存在，Supabase 会返回已有的 id（不是我们传的本地 id）
+  // 需要回填，保证后续操作都指向正确的 UUID
   if (data) {
     data.forEach(row => {
       const local = agencies.find(a => makeDedupeKey(a) === row.dedupe_key);
@@ -1882,7 +1897,7 @@ async function saveAgenciesBulk(agencies) {
 
 // 删除机构
 async function deleteAgencyFromSupabase(agencyId) {
-  const { error } = await supabase.from('agencies').delete().eq('id', agencyId);
+  const { error } = await sb.from('agencies').delete().eq('id', agencyId);
   if (error) console.error('删除失败:', error);
   return !error;
 }
@@ -1893,9 +1908,9 @@ async function logActivityToSupabase(event_type, event_detail, agency_id = null)
     event_type,
     event_detail,
     actor: state.currentUser,
-    agency_id: (agency_id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(agency_id)) ? agency_id : null
+    agency_id: agency_id  // 现在所有本地 id 都是 UUID 了
   };
-  await supabase.from('activity_log').insert(payload).catch(e => console.error(e));
+  await sb.from('activity_log').insert(payload).catch(e => console.error(e));
 }
 
 // 初始化：从 Supabase 拉数据
@@ -2130,7 +2145,7 @@ function generateSampleAgencies(n=150){
     }
     
     list.push({
-      id:'agc_'+i,
+      id:generateUUID(),
       company_name:`${pre} ${suf}`+(r()<0.3?' LLC':r()<0.15?' Inc':''),
       phone:randPhone(r),
       city:city,
@@ -3029,7 +3044,7 @@ function saveManualAdd(){
   }
   
   const newAgency={
-    id:'agc_manual_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
+    id:generateUUID(),
     company_name:company,
     phone:phone,
     city:city,
@@ -4136,7 +4151,7 @@ function doImportCSV(lines,headers){
     if(existingMap.has(key)){
       kept++;
     }else{
-      const newAgency={id:'agc_'+Date.now()+'_'+i+'_'+Math.random().toString(36).slice(2,6),...r};
+      const newAgency={id:generateUUID(),...r};
       state.agencies.push(newAgency);
       existingMap.set(key,newAgency);
       added++;
