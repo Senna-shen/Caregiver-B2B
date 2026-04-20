@@ -112,7 +112,6 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
   padding:8px 10px;margin-top:4px;
   font-size:11px;color:var(--text-2);
 }
-.status-pill{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-1)}
 
 /* 用户切换器 */
 .user-switcher{
@@ -245,9 +244,6 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
 .role-option-check{color:var(--accent);font-size:14px;opacity:0;flex-shrink:0}
 .role-option.active .role-option-check{opacity:1}
 
-.status-dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
-.status-dot.pulse{animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
 .topbar-tz{font-family:var(--mono);font-size:11px;color:var(--text-2)}
 
 /* 主布局 */
@@ -773,7 +769,6 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
         </div>
       </div>
     </div>
-    <div class="status-pill"><span class="status-dot pulse"></span>Pipeline Live</div>
     
     <div class="role-switcher" onclick="toggleRoleDropdown(event)">
       <div class="role-badge" id="role-badge">B</div>
