@@ -4586,6 +4586,9 @@ function confirmReview(sigId){
   updateStats();
   renderSignals();
   toast('已确认匹配','success');
+  // 同步到云端
+  updateSignalMatch(sig);
+  logActivityToSupabase('match_confirm',`确认匹配: ${sig.company_name}`,sig.matched_agency_id);
 }
 
 function rejectReview(sigId){
@@ -4599,17 +4602,22 @@ function rejectReview(sigId){
   updateStats();
   renderSignals();
   toast('已移到 New Leads','success');
+  // 同步到云端
+  updateSignalMatch(sig);
+  logActivityToSupabase('match_reject',`拒绝匹配: ${sig.company_name}`,null);
 }
 
 function addProspect(sigId){
   const sig=state.signals.find(s=>s.id===sigId);
   if(!sig)return;
   const newAgency={
-    id:'agc_new_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+    id:generateUUID(),
     company_name:sig.company_name,
-    phone:'',city:sig.city,county:'',address:'',
+    phone:'',city:sig.city,state:sig.state||'',county:'',address:'',
     license_number:'',license_type:'',issue_date:'',
-    source:'prospect'
+    source:'prospect',
+    lifecycle_stage:'cold',
+    owner:null
   };
   state.agencies.push(newAgency);
   sig.matched_agency_id=newAgency.id;
@@ -4622,6 +4630,9 @@ function addProspect(sigId){
   updateStats();
   renderSignals();
   toast(`已将 ${sig.company_name} 加入数据库`,'success');
+  // 同步到云端（先存机构，再更新信号的匹配关系）
+  saveAgencyToSupabase(newAgency).then(()=>updateSignalMatch(sig));
+  logActivityToSupabase('prospect_add',`新收录: ${sig.company_name}`,newAgency.id);
 }
 
 function addProspectGroup(groupKey){
@@ -4629,11 +4640,13 @@ function addProspectGroup(groupKey){
   if(sigsToAdd.length===0)return;
   const companyName=sigsToAdd[0].company_name;
   const newAgency={
-    id:'agc_new_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+    id:generateUUID(),
     company_name:companyName,
-    phone:'',city:sigsToAdd[0].city,county:'',address:'',
+    phone:'',city:sigsToAdd[0].city,state:sigsToAdd[0].state||'',county:'',address:'',
     license_number:'',license_type:'',issue_date:'',
-    source:'prospect'
+    source:'prospect',
+    lifecycle_stage:'cold',
+    owner:null
   };
   state.agencies.push(newAgency);
   sigsToAdd.forEach(sig=>{
@@ -4648,6 +4661,11 @@ function addProspectGroup(groupKey){
   updateStats();
   renderProspects();
   toast(`已加入：${companyName}`,'success');
+  // 同步到云端
+  saveAgencyToSupabase(newAgency).then(()=>{
+    sigsToAdd.forEach(sig=>updateSignalMatch(sig));
+  });
+  logActivityToSupabase('prospect_add',`批量新收录: ${companyName} (${sigsToAdd.length}条)`,newAgency.id);
 }
 
 function addAllProspects(){
