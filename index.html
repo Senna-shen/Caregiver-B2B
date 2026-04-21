@@ -1753,17 +1753,35 @@ function debouncedSaveAgency(agency, delay = 500) {
 
 // ============ Supabase 操作函数 ============
 
-// 加载所有机构
+// 加载所有机构（分页，突破 Supabase 默认 1000 条限制）
 async function loadAgenciesFromSupabase() {
-  const { data, error } = await sb
-    .from('agencies')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error) {
-    console.error('加载 agencies 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
-    return [];
+  const PAGE_SIZE = 1000;
+  let allData = [];
+  let page = 0;
+  
+  while (true) {
+    const { data, error } = await sb
+      .from('agencies')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    
+    if (error) {
+      console.error('加载 agencies 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
+      return allData;  // 返回已加载的
+    }
+    
+    allData = allData.concat(data);
+    
+    // 不足一页 → 已加载完
+    if (data.length < PAGE_SIZE) break;
+    
+    page++;
+    // 安全阀：最多 10 页 (10000 条)
+    if (page >= 10) break;
   }
-  return data.map(row => ({
+  
+  return allData.map(row => ({
     id: row.id,
     company_name: row.company_name,
     phone: row.phone || '',
@@ -1782,19 +1800,32 @@ async function loadAgenciesFromSupabase() {
   }));
 }
 
-// 加载所有信号
+// 加载所有信号（分页，突破 Supabase 默认 1000 条限制）
 async function loadSignalsFromSupabase() {
-  const { data, error } = await sb
-    .from('signals')
-    .select('*')
-    .eq('is_active', true)
-    .order('posted_date', { ascending: false })
-    .limit(500);
-  if (error) {
-    console.error('加载 signals 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
-    return [];
+  const PAGE_SIZE = 1000;
+  let allData = [];
+  let page = 0;
+  
+  while (true) {
+    const { data, error } = await sb
+      .from('signals')
+      .select('*')
+      .eq('is_active', true)
+      .order('posted_date', { ascending: false })
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    
+    if (error) {
+      console.error('加载 signals 失败 | message:', error.message, '| details:', error.details, '| hint:', error.hint, '| code:', error.code);
+      return allData;
+    }
+    
+    allData = allData.concat(data);
+    if (data.length < PAGE_SIZE) break;
+    page++;
+    if (page >= 10) break;  // 安全阀
   }
-  return data.map(row => ({
+  
+  return allData.map(row => ({
     id: row.id,
     company_name: row.company_name,
     job_title: row.job_title || '',
