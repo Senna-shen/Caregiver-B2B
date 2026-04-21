@@ -710,6 +710,9 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
   font-family:inherit;font-size:13px;background:var(--bg-alt);
 }
 .geo-search:focus{outline:none;background:var(--bg)}
+
+/* Background job spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -2081,6 +2084,18 @@ async function initFromSupabase() {
     if (document.querySelector('.page.active')?.dataset.page === 'database') renderDB();
     showSyncStatus(`✓ 已同步 ${agencies.length} 家机构 · ${signals.length} 条信号`, 'success');
     setTimeout(() => hideSyncStatus(), 3000);
+    
+    // 如果有未完成的抓取任务，启动轮询继续跟进
+    try {
+      const activeJobs = await loadActiveScrapeJobs();
+      if (activeJobs.length > 0) {
+        console.log(`✓ 发现 ${activeJobs.length} 个未完成任务，启动轮询`);
+        toast(`📡 ${activeJobs.length} 个后台抓取任务继续运行中`, 'info');
+        startJobPoller();
+      }
+    } catch (e) {
+      console.warn('检查活跃任务失败:', e.message);
+    }
   } catch (e) {
     console.error('初始化失败:', e);
     showSyncStatus('⚠ 云端连接失败，使用本地数据', 'error');
@@ -4614,39 +4629,79 @@ function parseCSVLine(line){
   return r.map(s=>s.replace(/^"|"$/g,''));
 }
 
-// ============ Apify Integration ============
-// 调用 valig/indeed-jobs-scraper，返回原始 jobs 数组
-async function fetchFromApify(sourceConfig, location) {
+// ============ Apify Integration (Async Three-Step) ============
+// 流程：
+//   1. startApifyRun() → POST /runs，立刻返回 runId（不等 Actor 跑完）
+//   2. 前端轮询 pollApifyRun(runId) 每 7 秒查一次状态
+//   3. 状态 SUCCEEDED 时 → fetchApifyDataset(datasetId) 拿数据
+
+// Step 1: 启动 Actor（异步）
+async function startApifyRun(sourceConfig, location) {
   const token = (state.apifyToken || '').trim();
-  if (!token) {
-    throw new Error('未配置 Apify Token，请到 Scrape Sources 页面填写');
-  }
-  
-  // Actor 路径：valig/indeed-jobs-scraper → URL 用 `valig~indeed-jobs-scraper`
+  if (!token) throw new Error('未配置 Apify Token');
   const actorSlug = (sourceConfig.actor || 'valig/indeed-jobs-scraper').replace('/', '~');
   const input = {
     title: state.scrapeConfig.query || 'caregiver',
     location: location,
-    datePosted: state.scrapeConfig.datePosted || '3',  // '1' / '3' / '7' / '14' / 'any'
+    datePosted: state.scrapeConfig.datePosted || '3',
     limit: state.scrapeConfig.maxItems || 200,
   };
-  
-  const url = `https://api.apify.com/v2/acts/${actorSlug}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`;
-  
+  const url = `https://api.apify.com/v2/acts/${actorSlug}/runs?token=${encodeURIComponent(token)}`;
   const resp = await fetch(url, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(input),
   });
-  
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
-    throw new Error(`Apify API ${resp.status}: ${text.slice(0, 200)}`);
+    throw new Error(`Apify 启动失败 ${resp.status}: ${text.slice(0, 200)}`);
   }
-  
+  const body = await resp.json();
+  if (!body.data || !body.data.id) {
+    throw new Error('Apify 响应格式异常：缺 run id');
+  }
+  return {
+    runId: body.data.id,
+    datasetId: body.data.defaultDatasetId,
+    status: body.data.status,  // 通常是 'READY' 或 'RUNNING'
+  };
+}
+
+// Step 2: 查询 Actor 状态
+async function pollApifyRun(runId) {
+  const token = (state.apifyToken || '').trim();
+  if (!token) throw new Error('未配置 Apify Token');
+  const url = `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`;
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Apify 查询失败 ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  const body = await resp.json();
+  const d = body.data || {};
+  return {
+    runId: d.id,
+    datasetId: d.defaultDatasetId,
+    status: d.status,  // READY / RUNNING / SUCCEEDED / FAILED / TIMING-OUT / TIMED-OUT / ABORTING / ABORTED
+    startedAt: d.startedAt,
+    finishedAt: d.finishedAt,
+    stats: d.stats || {},
+  };
+}
+
+// Step 3: 拿数据集
+async function fetchApifyDataset(datasetId) {
+  const token = (state.apifyToken || '').trim();
+  if (!token) throw new Error('未配置 Apify Token');
+  const url = `https://api.apify.com/v2/datasets/${encodeURIComponent(datasetId)}/items?token=${encodeURIComponent(token)}&clean=true&format=json`;
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Apify 读数据失败 ${resp.status}: ${text.slice(0, 200)}`);
+  }
   const data = await resp.json();
   if (!Array.isArray(data)) {
-    throw new Error('Apify 返回数据格式异常（非数组）');
+    throw new Error('Apify 数据格式异常（非数组）');
   }
   return data;
 }
@@ -4668,7 +4723,7 @@ function mapValigJobToSignal(job, sourceName) {
   
   // posted_date 首选 datePublished，次选 dateOnIndeed
   const postedIso = job.datePublished || job.dateOnIndeed || new Date().toISOString();
-  const postedDateOnly = postedIso.split('T')[0];  // YYYY-MM-DD
+  const postedDateOnly = postedIso.split('T')[0];
   
   return {
     company_name: (employer.name || '').trim(),
@@ -4679,207 +4734,360 @@ function mapValigJobToSignal(job, sourceName) {
     salary: salaryText,
     url: job.url || job.jobUrl || '',
     posted_date: postedDateOnly,
-    // Indeed 自带标记（未来可用于 HOT 判定）
     is_urgent_hire: !!job.isUrgentHire,
     is_high_volume_hiring: !!job.isHighVolumeHiring,
-    indeed_job_key: job.key || '',  // Indeed 的岗位唯一 ID
+    indeed_job_key: job.key || '',
   };
+}
+
+// ============ Scrape Jobs (Supabase Task Queue) ============
+
+// 创建一个新抓取任务到 scrape_jobs 表
+async function createScrapeJob(source, city) {
+  const payload = {
+    source_id: source.id,
+    source_name: source.name,
+    actor_slug: source.actor,
+    city: city,
+    query: state.scrapeConfig.query || 'caregiver',
+    date_posted: state.scrapeConfig.datePosted || '3',
+    max_items: state.scrapeConfig.maxItems || 200,
+    status: 'pending',
+  };
+  const { data, error } = await sb.from('scrape_jobs').insert(payload).select().single();
+  if (error) {
+    console.error('创建 scrape_job 失败:', error.message);
+    return null;
+  }
+  return data;
+}
+
+// 更新任务状态
+async function updateScrapeJob(jobId, updates) {
+  const { error } = await sb.from('scrape_jobs').update(updates).eq('id', jobId);
+  if (error) console.error('更新 scrape_job 失败:', error.message);
+}
+
+// 加载未完成的任务（pending / running）
+async function loadActiveScrapeJobs() {
+  const { data, error } = await sb.from('scrape_jobs')
+    .select('*')
+    .in('status', ['pending','running'])
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error('加载活跃 scrape_jobs 失败:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+// 启动一个任务：调 Apify + 存 runId
+async function launchScrapeJob(job, source) {
+  try {
+    const result = await startApifyRun(source, job.city);
+    await updateScrapeJob(job.id, {
+      apify_run_id: result.runId,
+      apify_dataset_id: result.datasetId,
+      status: 'running',
+    });
+    return { ok: true, runId: result.runId, datasetId: result.datasetId };
+  } catch (err) {
+    await updateScrapeJob(job.id, {
+      status: 'failed',
+      error_message: err.message,
+      finished_at: new Date().toISOString(),
+    });
+    return { ok: false, error: err.message };
+  }
+}
+
+// 轮询：检查一个任务的 Apify 状态，完成了就拉数据入库
+async function tickScrapeJob(job) {
+  if (!job.apify_run_id) return { done: false };
+  
+  let run;
+  try {
+    run = await pollApifyRun(job.apify_run_id);
+  } catch (err) {
+    console.error(`轮询 ${job.apify_run_id} 失败:`, err.message);
+    return { done: false, transient: true };
+  }
+  
+  const s = (run.status || '').toUpperCase();
+  
+  // 仍在跑
+  if (s === 'READY' || s === 'RUNNING') {
+    return { done: false };
+  }
+  
+  // 失败 / 超时 / 中止
+  if (s === 'FAILED' || s === 'TIMED-OUT' || s === 'TIMING-OUT' || s === 'ABORTED' || s === 'ABORTING') {
+    await updateScrapeJob(job.id, {
+      status: s === 'FAILED' ? 'failed' : (s.startsWith('TIM') ? 'timeout' : 'failed'),
+      error_message: `Apify status: ${s}`,
+      finished_at: new Date().toISOString(),
+    });
+    toast(`抓取失败（${job.city}）: ${s}`, 'error');
+    return { done: true, success: false };
+  }
+  
+  // 成功
+  if (s === 'SUCCEEDED') {
+    try {
+      const rawJobs = await fetchApifyDataset(job.apify_dataset_id || run.datasetId);
+      const mapped = rawJobs
+        .map(j => mapValigJobToSignal(j, job.source_name))
+        .filter(s => s.company_name && s.job_title);
+      
+      // 入库
+      const result = await ingestSignals(mapped);
+      
+      await updateScrapeJob(job.id, {
+        status: 'succeeded',
+        scraped_count: rawJobs.length,
+        inserted_count: result.inserted,
+        updated_count: result.updated,
+        finished_at: new Date().toISOString(),
+      });
+      
+      toast(`✓ ${job.city} 抓取完成：${rawJobs.length} 条（新增 ${result.inserted}）`, 'success');
+      
+      // 重跑匹配 + 刷新 UI
+      runMatching();
+      updateStats();
+      const page = document.querySelector('.page.active')?.dataset.page;
+      if (page === 'dashboard') updateStats();
+      else if (page === 'signals') renderSignals?.();
+      else if (page === 'hotlist') renderHotList?.();
+      
+      return { done: true, success: true };
+    } catch (err) {
+      console.error('入库失败:', err);
+      await updateScrapeJob(job.id, {
+        status: 'failed',
+        error_message: `入库失败: ${err.message}`,
+        finished_at: new Date().toISOString(),
+      });
+      toast(`抓取成功但入库失败: ${err.message}`, 'error');
+      return { done: true, success: false };
+    }
+  }
+  
+  return { done: false };
+}
+
+// 统一"信号入库"路径（抓取 + 匹配 + upsert）
+async function ingestSignals(mapped) {
+  if (!mapped.length) return { inserted: 0, updated: 0 };
+  
+  const today = new Date().toISOString().split('T')[0];
+  let inserted = 0, updated = 0;
+  
+  // 已有 signal_key 索引
+  const existingByKey = new Map();
+  state.signals.forEach(s => { if (s.signal_key) existingByKey.set(s.signal_key, s); });
+  
+  const toUpsert = [];
+  
+  mapped.forEach(raw => {
+    const key = makeSignalKey(raw);
+    if (existingByKey.has(key)) {
+      // 已存在 → 刷新 last_seen_at / seen_count / Indeed 标记
+      const existing = existingByKey.get(key);
+      existing.last_seen_at = today;
+      existing.seen_count = (existing.seen_count || 1) + 1;
+      existing.is_active = true;
+      if (raw.is_urgent_hire !== undefined) existing.is_urgent_hire = raw.is_urgent_hire;
+      if (raw.is_high_volume_hiring !== undefined) existing.is_high_volume_hiring = raw.is_high_volume_hiring;
+      toUpsert.push(existing);
+      updated++;
+    } else {
+      // 新增
+      const newSig = {
+        ...raw,
+        id: generateUUID(),
+        signal_key: key,
+        first_seen_at: today,
+        last_seen_at: today,
+        is_active: true,
+        seen_count: 1,
+        posted_hours_ago: raw.posted_date ? Math.floor((Date.now() - new Date(raw.posted_date).getTime())/3600000) : 0,
+      };
+      state.signals.push(newSig);
+      existingByKey.set(key, newSig);
+      toUpsert.push(newSig);
+      inserted++;
+    }
+  });
+  
+  // 批量 upsert 到 Supabase
+  if (toUpsert.length) {
+    await saveSignalsBulk(toUpsert);
+  }
+  
+  return { inserted, updated };
+}
+
+// ============ Active Job Poller (Singleton) ============
+let _pollerHandle = null;
+let _pollerRunning = false;
+
+// 启动轮询（幂等，多次调用无副作用）
+function startJobPoller() {
+  if (_pollerHandle) return;
+  // 每 7 秒轮询一次
+  _pollerHandle = setInterval(pollerTick, 7000);
+  // 立刻跑一次
+  pollerTick();
+  console.log('✓ Scrape job poller started');
+}
+
+// 停止轮询（一般不主动停，只在没有活跃任务时 tick 自己停）
+function stopJobPoller() {
+  if (_pollerHandle) {
+    clearInterval(_pollerHandle);
+    _pollerHandle = null;
+    console.log('✓ Scrape job poller stopped');
+  }
+}
+
+async function pollerTick() {
+  if (_pollerRunning) return;  // 防重入
+  _pollerRunning = true;
+  try {
+    const jobs = await loadActiveScrapeJobs();
+    if (jobs.length === 0) {
+      // 没有活跃任务 → 停止轮询
+      updateBackgroundBadge(null);
+      stopJobPoller();
+      return;
+    }
+    
+    updateBackgroundBadge(jobs);
+    
+    // 逐个检查（串行，避免并发压力）
+    for (const job of jobs) {
+      // pending 状态：需要先 launch
+      if (job.status === 'pending') {
+        const source = state.sources.find(s => s.id === job.source_id);
+        if (!source) {
+          await updateScrapeJob(job.id, { status: 'failed', error_message: `source "${job.source_id}" 未找到`, finished_at: new Date().toISOString() });
+          continue;
+        }
+        await launchScrapeJob(job, source);
+        continue;
+      }
+      // running 状态：查 Apify 状态
+      if (job.status === 'running') {
+        await tickScrapeJob(job);
+      }
+    }
+  } catch (err) {
+    console.error('pollerTick 异常:', err);
+  } finally {
+    _pollerRunning = false;
+  }
+}
+
+// 后台任务胶囊（右下角）
+function updateBackgroundBadge(jobs) {
+  let badge = document.getElementById('bg-scrape-badge');
+  if (!jobs || jobs.length === 0) {
+    if (badge) badge.style.display = 'none';
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'bg-scrape-badge';
+    badge.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:9999;background:#1e40af;color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,0.2);font-family:var(--sans);display:flex;align-items:center;gap:8px;cursor:default;max-width:320px';
+    document.body.appendChild(badge);
+  }
+  badge.style.display = 'flex';
+  const running = jobs.filter(j => j.status === 'running').length;
+  const pending = jobs.filter(j => j.status === 'pending').length;
+  const parts = [];
+  if (running) parts.push(`${running} 运行中`);
+  if (pending) parts.push(`${pending} 排队`);
+  const detail = jobs.slice(0,2).map(j => j.city).join('，');
+  badge.innerHTML = `<span style="display:inline-block;width:10px;height:10px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite"></span><span>后台抓取：${parts.join(' · ')}</span><span style="opacity:0.8;font-size:11px">${detail}${jobs.length>2?` +${jobs.length-2}`:''}</span>`;
 }
 
 async function runScrape(){
   if(state.agencies.length===0){toast('请先导入机构名单','error');return}
   const active=state.sources.filter(s=>s.active);
   if(active.length===0){toast('请启用至少一个抓取源','error');return}
-  if(state.geography.states.length===0){toast('请在 Scrape Sources 页面先配置抓取地理范围','error');goPage('sources');return}
   
-  showModal('抓取招聘信号','APIFY RUNNING · DEDUP');
-  setProgress(0,'初始化…');
-  logEntry('连接 Apify API…',0);
-  await sleep(400);
-  logEntry('✓ 已连接',1);
+  const hasToken = !!(state.apifyToken && state.apifyToken.trim());
+  const hasValigSource = active.some(s => (s.actor || '').startsWith('valig/'));
   
-  const geoDesc=buildGeoDescription();
-  logEntry(`地理范围: ${geoDesc}`,1);
-  logEntry(`历史信号池: ${state.signals.length} 条`,1);
-  setProgress(10,'开始抓取…');
+  if (hasValigSource && !hasToken) {
+    toast('请先到 Scrape Sources 页面填写 Apify Token', 'error');
+    goPage('sources');
+    return;
+  }
   
-  // 建立已有信号的索引（by signal_key）
-  const signalIndex=new Map();
-  state.signals.forEach(s=>{
-    if(s.signal_key)signalIndex.set(s.signal_key,s);
-  });
+  // 准备城市列表
+  const cities = (state.geography.cities && state.geography.cities.length > 0)
+    ? state.geography.cities.map(entry => {
+        if (typeof entry === 'string') {
+          // "TX:Houston" 形式
+          if (entry.includes(':')) {
+            const [st, c] = entry.split(':');
+            return `${c}, ${st}`;
+          }
+          return entry;
+        }
+        return `${entry.city}, ${entry.state || 'TX'}`;
+      })
+    : ['Houston, TX'];
   
-  const today=new Date().toISOString().split('T')[0];
-  let totalScraped=0;      // 本次 Apify 返回的总条数
-  let totalNew=0;          // 真正新增
-  let totalRefreshed=0;    // 已存在，只更新 last_seen_at
+  let createdCount = 0;
+  let demoCount = 0;
   
-  // 本次抓取触达的 signal_key 集合
-  const touchedKeys=new Set();
-  
-  for(let i=0;i<active.length;i++){
-    const src=active[i];
-    logEntry(`启动 ${src.name} (${geoDesc})…`,0);
-    setProgress(10+(i/active.length)*70,`${src.name}…`);
-    await sleep(300);
-    
-    // 决定用真实 Apify 还是 demo 模拟
+  for (const src of active) {
     const isValig = (src.actor || '').startsWith('valig/');
-    const hasToken = !!(state.apifyToken && state.apifyToken.trim());
-    
-    let rawSigs = [];
     
     if (isValig && hasToken) {
-      // === 真实 Apify 抓取 ===
-      // 如果配置了多个城市，遍历每个城市（每个单独一次 API 请求）
-      const cities = (state.geography.cities && state.geography.cities.length > 0)
-        ? state.geography.cities
-        : ['Houston, TX'];  // 默认兜底
-      
-      for (const cityEntry of cities) {
-        const cityStr = typeof cityEntry === 'string' 
-          ? cityEntry 
-          : `${cityEntry.city}, ${cityEntry.state || 'TX'}`;
-        try {
-          logEntry(`  → ${cityStr} via Apify…`, 0);
-          const jobs = await fetchFromApify(src, cityStr);
-          logEntry(`  ✓ Apify 返回 ${jobs.length} 条`, 1);
-          const mapped = jobs.map(j => mapValigJobToSignal(j, src.name)).filter(s => s.company_name && s.job_title);
-          rawSigs = rawSigs.concat(mapped);
-        } catch (err) {
-          console.error(`Apify 抓取失败 (${cityStr}):`, err);
-          logEntry(`  ✗ ${cityStr} 失败: ${err.message}`, 1);
-          toast(`${src.name} 抓取失败：${err.message}`, 'error');
-        }
+      // 为每个城市创建一个 scrape_job
+      for (const city of cities) {
+        const job = await createScrapeJob(src, city);
+        if (job) createdCount++;
       }
-    } else if (isValig && !hasToken) {
-      // 配了真 Actor 但没 Token
-      logEntry(`  ⚠ 未配置 Apify Token，跳过 ${src.name}`, 1);
-      toast('未配置 Apify Token，请到 Scrape Sources 页面填写', 'error');
-      continue;
-    } else {
-      // === Demo 模拟数据（未接入真实 API 的源） ===
-      const r=rng(Date.now()%1000+i*17);
-      const count=Math.floor(r()*15+10);
-      rawSigs = generateSignals(count, state.agencies, src.name, state.signals);
-      logEntry(`  (模拟 ${count} 条，未启用真实 Apify)`, 1);
+    } else if (!isValig) {
+      // 非 valig 源 → 走 demo 模拟（同步快速返回）
+      const r = rng(Date.now() % 1000 + demoCount * 17);
+      const count = Math.floor(r() * 15 + 10);
+      const rawSigs = generateSignals(count, state.agencies, src.name, state.signals);
+      const mapped = rawSigs.map(s => ({...s}));  // 已经是 signal 格式
+      await ingestSignals(mapped);
+      src.posts = count;
+      src.lastRun = new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+      demoCount++;
     }
-    
-    const count = rawSigs.length;
-    
-    let sourceNew=0,sourceRefreshed=0;
-    rawSigs.forEach(raw=>{
-      const key=makeSignalKey(raw);
-      touchedKeys.add(key);
-      
-      if(signalIndex.has(key)){
-        // 已存在 → 只更新 last_seen_at 和 seen_count
-        const existing=signalIndex.get(key);
-        existing.last_seen_at=today;
-        existing.seen_count=(existing.seen_count||1)+1;
-        existing.is_active=true;
-        // 也刷新标记（新抓取可能改变状态）
-        if (raw.is_urgent_hire !== undefined) existing.is_urgent_hire = raw.is_urgent_hire;
-        if (raw.is_high_volume_hiring !== undefined) existing.is_high_volume_hiring = raw.is_high_volume_hiring;
-        sourceRefreshed++;
-      }else{
-        // 新信号 → 插入
-        const newSig={
-          ...raw,
-          id:generateUUID(),
-          signal_key:key,
-          first_seen_at:today,
-          last_seen_at:today,
-          is_active:true,
-          seen_count:1,
-          posted_hours_ago:Math.floor((Date.now()-new Date(raw.posted_date).getTime())/3600000)
-        };
-        delete newSig._reuseExisting;
-        state.signals.push(newSig);
-        signalIndex.set(key,newSig);
-        sourceNew++;
-      }
-    });
-    
-    totalScraped+=count;
-    totalNew+=sourceNew;
-    totalRefreshed+=sourceRefreshed;
-    src.posts=count;
-    src.lastRun=new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
-    logEntry(`✓ ${src.name}: 抓取 ${count} (新 ${sourceNew} · 持续中 ${sourceRefreshed})`,1);
   }
   
-  // 标记本次没触达的 signal 为 inactive
-  setProgress(80,'标记过期信号…');
-  await sleep(300);
-  let markedInactive=0;
-  state.signals.forEach(s=>{
-    if(!touchedKeys.has(s.signal_key)&&s.is_active){
-      // 本次没抓到这条 → 可能已下架
-      const daysSinceLastSeen=(Date.now()-new Date(s.last_seen_at).getTime())/86400000;
-      if(daysSinceLastSeen>=1){
-        // 超过 1 天没被抓到 → 标记 inactive
-        s.is_active=false;
-        markedInactive++;
-      }
-    }
-  });
-  if(markedInactive>0)logEntry(`⚠ ${markedInactive} 条信号标记为已下架`,1);
+  if (createdCount === 0 && demoCount === 0) {
+    toast('没有可启动的抓取任务', 'error');
+    return;
+  }
   
-  // 清理超过 30 天的旧信号
-  const cutoff=Date.now()-30*86400000;
-  const beforeCount=state.signals.length;
-  state.signals=state.signals.filter(s=>{
-    const postedTime=new Date(s.posted_date).getTime();
-    return postedTime>=cutoff;
-  });
-  const removed=beforeCount-state.signals.length;
-  if(removed>0)logEntry(`🗑 清理 ${removed} 条超过30天的旧信号`,1);
+  if (createdCount > 0) {
+    toast(`✓ 已启动 ${createdCount} 个后台抓取任务（${cities.length} 城市）`, 'success');
+    logActivityToSupabase('scrape', `启动 ${createdCount} 个异步任务`, null);
+    // 启动轮询
+    startJobPoller();
+  }
   
-  // 更新 posted_hours_ago（每次都重新计算）
-  state.signals.forEach(s=>{
-    s.posted_hours_ago=Math.floor((Date.now()-new Date(s.posted_date).getTime())/3600000);
-  });
+  if (demoCount > 0) {
+    // demo 数据已经入库了
+    runMatching();
+    updateStats();
+    const msg = `模拟 ${demoCount} 个源已完成`;
+    toast(msg, 'success');
+  }
   
-  setProgress(90,'模糊匹配…');
-  logEntry('开始 fuzzy match…',0);
-  await sleep(500);
-  runMatching();
-  const matched=Array.from(state.matches.values()).reduce((s,v)=>s+v.length,0);
-  const review=state.reviewMatches.size;
-  const prospects=state.prospects.length;
-  logEntry(`✓ 匹配完成`,1);
-  logEntry(`  - 强匹配: ${matched}`,1);
-  logEntry(`  - 待审核: ${review}`,1);
-  logEntry(`  - 名单外: ${prospects}`,1);
-  setProgress(100,'完成');
-  
-  await sleep(800);
-  closeModal();
-  
-  const msgParts=[];
-  msgParts.push(`抓取 ${totalScraped} 条`);
-  if(totalNew>0)msgParts.push(`新增 ${totalNew}`);
-  if(totalRefreshed>0)msgParts.push(`持续 ${totalRefreshed}`);
-  if(markedInactive>0)msgParts.push(`下架 ${markedInactive}`);
-  logActivity(`✓ ${msgParts.join(' · ')}`);
-  updateStats();
-  renderSources();
-  
-  let toastMsg=`抓取 ${totalScraped} · 新增 ${totalNew}`;
-  if(totalRefreshed>0)toastMsg+=` · ${totalRefreshed} 条持续中（未重复计数）`;
-  toast(toastMsg,'success');
+  // 导航到 Raw Signals 页（让用户看到进度）
   goPage('signals');
-  
-  // 同步 signals 到云端
-  if(state.signals.length>0){
-    showSyncStatus(`正在同步 ${state.signals.length} 条信号到云端…`);
-    saveSignalsBulk(state.signals).then(r=>{
-      showSyncStatus(`✓ 已同步 ${r.saved} 条信号`,'success');
-      setTimeout(()=>hideSyncStatus(),3000);
-    });
-  }
-  logActivityToSupabase('scrape',`抓取 ${totalScraped} · 新增 ${totalNew} · 持续 ${totalRefreshed}`,null);
 }
 
 function buildGeoDescription(){
