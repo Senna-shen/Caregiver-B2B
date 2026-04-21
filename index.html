@@ -1392,7 +1392,7 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
         </div>
         <div style="font-size:11px;color:var(--text-2);margin-top:12px;padding-top:10px;border-top:1px solid var(--border);line-height:1.6">
           获取 Token：<a href="https://console.apify.com/account/integrations" target="_blank" style="color:var(--accent)">console.apify.com/account/integrations</a>
-          · 成本参考：Indeed ≈ $5/1000 · ZipRecruiter ≈ $15/1000 · Craigslist ≈ $3/1000
+          · 成本：Indeed ≈ $5/1000 · ZR Trial 3h 免费后 $29/月 · CL 需订阅
         </div>
       </div>
 
@@ -2262,8 +2262,8 @@ const state = {
   },
   sources: [
     {id:'indeed',name:'Indeed',color:'#2557a7',letter:'I',actor:'valig/indeed-jobs-scraper',active:true,freq:'每日',posts:0,lastRun:'—'},
-    {id:'zip',name:'ZipRecruiter',color:'#58ba43',letter:'Z',actor:'bebity/ziprecruiter-scraper',active:true,freq:'每日',posts:0,lastRun:'—'},
-    {id:'craigslist',name:'Craigslist',color:'#551a8b',letter:'L',actor:'ivanvs/craigslist-scraper',active:true,freq:'每日',posts:0,lastRun:'—'},
+    {id:'zip',name:'ZipRecruiter',color:'#58ba43',letter:'Z',actor:'memo23/apify-ziprecruiter-scraper',active:true,freq:'每日',posts:0,lastRun:'—',note:'Trial 3h 免费 / $29/月（测试期）'},
+    {id:'craigslist',name:'Craigslist',color:'#551a8b',letter:'L',actor:'ivanvs/craigslist-scraper',active:false,freq:'每日',posts:0,lastRun:'—',note:'Rental · 需订阅后才能启用'},
     {id:'google',name:'Google Jobs',color:'#ea4335',letter:'G',actor:'memo23/google-jobs-scraper',active:false,freq:'每日',posts:0,lastRun:'—'},
     {id:'care',name:'Care.com',color:'#ff6b35',letter:'C',actor:'memo23/care-com-scraper',active:false,freq:'每日',posts:0,lastRun:'—'},
     {id:'linkedin',name:'LinkedIn Jobs',color:'#0a66c2',letter:'L',actor:'curious_coder/linkedin-jobs',active:false,freq:'每2日',posts:0,lastRun:'—'},
@@ -4758,8 +4758,35 @@ function buildActorInput(sourceConfig, location, job) {
     };
   }
 
-  // bebity/ziprecruiter-scraper
-  // Schema: { keyword, location, maxItems, ... }
+  // memo23/apify-ziprecruiter-scraper
+  // 实际字段（截图 JSON 验证）：searchJobKeyword / searchLocation / searchPostedWithinDays / maxItems
+  // 强制 RESIDENTIAL 代理（Actor 要求）
+  if (actor.startsWith('memo23/apify-ziprecruiter')) {
+    // datePosted 是字符串 '1'/'3'/'7'/'14'/'any'，ZR 要数字天数
+    const daysMap = {'1':1, '3':3, '7':7, '14':14, 'any':30};
+    const days = daysMap[String(datePosted)] ?? 7;
+    return {
+      searchJobKeyword: query,
+      searchLocation: location,
+      searchPostedWithinDays: days,
+      searchRadiusMiles: 25,
+      searchRemoteOnly: false,
+      searchEasyApply: false,
+      externalApplyOnly: false,
+      searchStartPage: 1,
+      maxItems: maxItems,
+      maxConcurrency: 10,
+      minConcurrency: 1,
+      maxRequestRetries: 30,
+      proxy: {
+        useApifyProxy: true,
+        apifyProxyGroups: ['RESIDENTIAL'],
+        apifyProxyCountry: 'US',
+      },
+    };
+  }
+
+  // bebity/ziprecruiter-scraper（legacy，已弃用）
   if (actor.startsWith('bebity/')) {
     return {
       keyword: query,
@@ -4985,7 +5012,7 @@ function mapJobToSignalBySource(rawJob, job) {
   if (actor.startsWith('valig/')) {
     return mapValigJobToSignal(rawJob, sourceName);
   }
-  if (actor.startsWith('bebity/')) {
+  if (actor.startsWith('memo23/apify-ziprecruiter') || actor.startsWith('bebity/')) {
     return mapZipRecruiterJobToSignal(rawJob, sourceName);
   }
   if (actor.startsWith('ivanvs/')) {
@@ -5421,7 +5448,7 @@ async function runScrape(){
   
   const hasToken = !!(state.apifyToken && state.apifyToken.trim());
   // 已知 Apify actor 前缀（有实现 mapper 的）
-  const KNOWN_ACTOR_PREFIXES = ['valig/', 'bebity/', 'ivanvs/'];
+  const KNOWN_ACTOR_PREFIXES = ['valig/', 'memo23/apify-ziprecruiter', 'bebity/', 'ivanvs/'];
   const isKnownActor = (a) => KNOWN_ACTOR_PREFIXES.some(p => (a || '').startsWith(p));
   const hasApifySource = active.some(s => isKnownActor(s.actor));
   
