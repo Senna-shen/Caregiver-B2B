@@ -1392,7 +1392,7 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
         </div>
         <div style="font-size:11px;color:var(--text-2);margin-top:12px;padding-top:10px;border-top:1px solid var(--border);line-height:1.6">
           获取 Token：<a href="https://console.apify.com/account/integrations" target="_blank" style="color:var(--accent)">console.apify.com/account/integrations</a>
-          · 成本：Indeed ≈ $5/1000 · ZR Trial 3h 免费后 $29/月 · CL 需订阅
+          · 成本：Indeed ≈ $5/1000 · CL ≈ $8/1000（按量付费）· ZR trial 已用完
         </div>
       </div>
 
@@ -2262,8 +2262,8 @@ const state = {
   },
   sources: [
     {id:'indeed',name:'Indeed',color:'#2557a7',letter:'I',actor:'valig/indeed-jobs-scraper',active:true,freq:'每日',posts:0,lastRun:'—'},
-    {id:'zip',name:'ZipRecruiter',color:'#58ba43',letter:'Z',actor:'memo23/apify-ziprecruiter-scraper',active:true,freq:'每日',posts:0,lastRun:'—',note:'Trial 3h 免费 / $29/月（测试期）'},
-    {id:'craigslist',name:'Craigslist',color:'#551a8b',letter:'L',actor:'ivanvs/craigslist-scraper',active:false,freq:'每日',posts:0,lastRun:'—',note:'Rental · 需订阅后才能启用'},
+    {id:'zip',name:'ZipRecruiter',color:'#58ba43',letter:'Z',actor:'memo23/apify-ziprecruiter-scraper',active:false,freq:'每日',posts:0,lastRun:'—',note:'$29/月订阅 · trial 已用完'},
+    {id:'craigslist',name:'Craigslist',color:'#551a8b',letter:'L',actor:'ivanvs/craigslist-scraper-pay-per-result',active:true,freq:'每日',posts:0,lastRun:'—',note:'$8/1000 按量付费，无月费'},
     {id:'google',name:'Google Jobs',color:'#ea4335',letter:'G',actor:'memo23/google-jobs-scraper',active:false,freq:'每日',posts:0,lastRun:'—'},
     {id:'care',name:'Care.com',color:'#ff6b35',letter:'C',actor:'memo23/care-com-scraper',active:false,freq:'每日',posts:0,lastRun:'—'},
     {id:'linkedin',name:'LinkedIn Jobs',color:'#0a66c2',letter:'L',actor:'curious_coder/linkedin-jobs',active:false,freq:'每2日',posts:0,lastRun:'—'},
@@ -4796,17 +4796,25 @@ function buildActorInput(sourceConfig, location, job) {
     };
   }
 
-  // ivanvs/craigslist-scraper
-  // Schema 常见字段：startUrls + maxItems；我们用 search 查询 healthcare 分类
-  // URL 模板: https://<city-subdomain>.craigslist.org/search/hea?query=<keyword>
-  if (actor.startsWith('ivanvs/')) {
+  // ivanvs/craigslist-scraper (Pay-per-result 版本, $8/1000)
+  // 真实 schema: { urls[], maxAge, maxConcurrency }
+  // Home care 岗位在 CL 分布在 jobs (jjj) 和 gigs (ggg) 两个分类，我们都抓
+  // 注意：没有 keyword 字段，query 要编码进 URL
+  if (actor.startsWith('ivanvs/craigslist')) {
     const subdomain = craigslistSubdomainFor(location);
     const encoded = encodeURIComponent(query);
-    const searchUrl = `https://${subdomain}.craigslist.org/search/hea?query=${encoded}#search=1~list~0~0`;
+    // 同时抓 jobs 和 gigs 分类
+    const urls = [
+      { url: `https://${subdomain}.craigslist.org/search/jjj?query=${encoded}#search=1~list~0~0` },
+      { url: `https://${subdomain}.craigslist.org/search/ggg?query=${encoded}#search=1~list~0~0` },
+    ];
+    // datePosted 字符串 → maxAge 天数
+    const ageMap = {'1':1, '3':3, '7':7, '14':14, 'any':30};
+    const maxAge = ageMap[String(datePosted)] ?? 15;
     return {
-      startUrls: [{ url: searchUrl }],
-      maxItems: maxItems,
-      proxyConfiguration: { useApifyProxy: true },
+      urls: urls,
+      maxAge: maxAge,
+      maxConcurrency: 4,
     };
   }
 
