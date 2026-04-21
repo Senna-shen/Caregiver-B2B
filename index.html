@@ -4911,28 +4911,64 @@ function mapValigJobToSignal(job, sourceName) {
   };
 }
 
-// ZipRecruiter (bebity/ziprecruiter-scraper) mapper
-// 常见字段：Title / Company / Location / Salary / PostedDate / OrganicApplyUrl / Description
+// ZipRecruiter (memo23/apify-ziprecruiter-scraper) mapper
+// 真实 schema（经用户提供的 Dataset JSON 验证 2026-04）:
+//   job: {id, title, postedDate, url, employmentTypes[], description}
+//   company: {id, name, displayName}
+//   location: {city, state, stateCode, displayName, county}
+//   compensation: {min, max, interval, currency, source}
+//   url: <顶层完整 ZR URL>
 function mapZipRecruiterJobToSignal(job, sourceName) {
-  const title = (job.Title || job.title || job.jobTitle || '').trim();
-  const company = (job.Company || job.company || job.companyName || '').trim();
-  const rawLoc = (job.Location || job.location || job.city || '').trim();
-  // Location 形如 "Houston, TX" 或 "Houston, TX 77001"
-  let city = '', state = '';
-  if (rawLoc) {
-    const parts = rawLoc.split(',').map(s => s.trim()).filter(Boolean);
-    city = parts[0] || '';
-    state = (parts[1] || '').split(/\s+/)[0] || '';
-  }
-  // posted_date：ZR 通常给 "3 days ago" 或 ISO；尽量解析
+  const jobData = job.job || {};
+  const companyData = job.company || {};
+  const locData = job.location || {};
+  const comp = job.compensation || {};
+
+  const title = toSafeString(jobData.title).trim();
+  const company = toSafeString(companyData.name || companyData.displayName).trim();
+
+  const city = toSafeString(locData.city).trim();
+  const state = toSafeString(locData.stateCode || locData.state).trim();
+
+  // posted_date 直接用 ISO
   let postedDateOnly = new Date().toISOString().split('T')[0];
-  const rawPosted = job.PostedDate || job.postedDate || job.datePosted || job.posted_at || '';
+  const rawPosted = toSafeString(jobData.postedDate);
   if (rawPosted) {
     const parsed = parseRelativeOrIsoDate(rawPosted);
     if (parsed) postedDateOnly = parsed;
   }
-  const salaryText = (job.Salary || job.salary || job.salaryText || '').toString().trim();
-  const url = job.OrganicApplyUrl || job.jobUrl || job.url || job.Url || '';
+
+  // Salary 格式化
+  let salaryText = '';
+  if (comp.min && comp.max) {
+    const unit = ({PAY_INTERVAL_HOUR:'/hr', PAY_INTERVAL_YEAR:'/yr', PAY_INTERVAL_MONTH:'/mo', PAY_INTERVAL_WEEK:'/wk', PAY_INTERVAL_DAY:'/day'})[comp.interval] || '';
+    if (comp.min === comp.max) {
+      salaryText = `$${comp.min}${unit}`;
+    } else {
+      salaryText = `$${comp.min} - $${comp.max}${unit}`;
+    }
+  } else if (comp.min) {
+    salaryText = `From $${comp.min}`;
+  }
+
+  // URL 优先用顶层 job.url（完整 ZR URL），次用 jobData.url（相对路径）
+  let url = toSafeString(job.url).trim();
+  if (!url) {
+    const relUrl = toSafeString(jobData.url);
+    if (relUrl.startsWith('http')) {
+      url = relUrl;
+    } else if (relUrl.startsWith('/')) {
+      url = `https://www.ziprecruiter.com${relUrl}`;
+    }
+  }
+
+  // Urgency 启发式（ZR 没有 isUrgentHire 字段，用 title 推断）
+  const titleLower = title.toLowerCase();
+  const isUrgent = /\b(urgent|urgently|same day|hiring event|actively hiring|immediate|start now|apply today|same[- ]day pay)\b/i.test(titleLower);
+  const isHighVolume = /\b(hiring event|multiple positions|multiple openings|hiring now|caregivers? needed)\b/i.test(titleLower);
+
+  // ZR 的 jobData.id 是他们的内部 ID，放到 indeed_job_key 字段复用（跨源唯一性不保证，但足够辅助调试）
+  const zrKey = toSafeString(jobData.id);
 
   return {
     company_name: company,
@@ -4943,10 +4979,19 @@ function mapZipRecruiterJobToSignal(job, sourceName) {
     salary: salaryText,
     url: url,
     posted_date: postedDateOnly,
-    is_urgent_hire: false,
-    is_high_volume_hiring: false,
-    indeed_job_key: '',
+    is_urgent_hire: isUrgent,
+    is_high_volume_hiring: isHighVolume,
+    indeed_job_key: zrKey ? `zr:${zrKey}` : '',
   };
+}
+
+// 统一字符串化工具：处理 object / null / undefined / number
+function toSafeString(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  // object → 返回空（调用方应该自己处理 object）
+  return '';
 }
 
 // Craigslist (ivanvs/craigslist-scraper) mapper
