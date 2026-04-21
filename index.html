@@ -1374,9 +1374,25 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
               onchange="state.scrapeConfig.maxItems=parseInt(this.value)||200">
           </div>
         </div>
+        <!-- 关键词多选配置 -->
+        <div style="margin-top:14px">
+          <div class="geo-field-label" style="display:flex;align-items:center;justify-content:space-between">
+            <span>搜索关键词（每个关键词会在所有启用的源里并发抓取）</span>
+            <span id="scrape-combos-hint" style="font-size:11px;color:var(--text-2);font-weight:400"></span>
+          </div>
+          <div id="keyword-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center"></div>
+          <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+            <input type="text" id="new-keyword-input" class="geo-select"
+              placeholder="添加新关键词，如 companion care"
+              style="flex:1;padding:6px 10px;font-size:12px"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();addKeyword(this.value);this.value='';}">
+            <button class="btn" style="padding:6px 12px;font-size:12px" onclick="addKeyword(document.getElementById('new-keyword-input').value);document.getElementById('new-keyword-input').value=''">添加</button>
+            <button class="btn" style="padding:6px 12px;font-size:12px" onclick="resetKeywordsDefault()">恢复默认</button>
+          </div>
+        </div>
         <div style="font-size:11px;color:var(--text-2);margin-top:12px;padding-top:10px;border-top:1px solid var(--border);line-height:1.6">
           获取 Token：<a href="https://console.apify.com/account/integrations" target="_blank" style="color:var(--accent)">console.apify.com/account/integrations</a>
-          · 成本参考：valig/indeed-jobs-scraper ≈ $5/1000 条 · Last 3 days + Houston ≈ 150-250 条/次
+          · 成本参考：Indeed ≈ $5/1000 · ZipRecruiter ≈ $15/1000 · Craigslist ≈ $3/1000
         </div>
       </div>
 
@@ -2246,18 +2262,18 @@ const state = {
   },
   sources: [
     {id:'indeed',name:'Indeed',color:'#2557a7',letter:'I',actor:'valig/indeed-jobs-scraper',active:true,freq:'每日',posts:0,lastRun:'—'},
-    {id:'zip',name:'ZipRecruiter',color:'#58ba43',letter:'Z',actor:'memo23/apify-ziprecruiter-scraper',active:false,freq:'每日',posts:0,lastRun:'—'},
+    {id:'zip',name:'ZipRecruiter',color:'#58ba43',letter:'Z',actor:'bebity/ziprecruiter-scraper',active:true,freq:'每日',posts:0,lastRun:'—'},
+    {id:'craigslist',name:'Craigslist',color:'#551a8b',letter:'L',actor:'ivanvs/craigslist-scraper',active:true,freq:'每日',posts:0,lastRun:'—'},
     {id:'google',name:'Google Jobs',color:'#ea4335',letter:'G',actor:'memo23/google-jobs-scraper',active:false,freq:'每日',posts:0,lastRun:'—'},
     {id:'care',name:'Care.com',color:'#ff6b35',letter:'C',actor:'memo23/care-com-scraper',active:false,freq:'每日',posts:0,lastRun:'—'},
     {id:'linkedin',name:'LinkedIn Jobs',color:'#0a66c2',letter:'L',actor:'curious_coder/linkedin-jobs',active:false,freq:'每2日',posts:0,lastRun:'—'},
-    {id:'craigslist',name:'Craigslist',color:'#551a8b',letter:'C',actor:'ivanvs/craigslist-scraper',active:false,freq:'每周',posts:0,lastRun:'—'},
   ],
   // Apify 配置
   apifyToken: '',  // 用户在 Scrape Sources 页面配置
   scrapeConfig: {
-    query: 'caregiver',
+    queries: ['caregiver','CNA','HHA','home health aide','live-in caregiver'],
     datePosted: '3',  // '1' (24h) / '3' (3 days) / '7' / '14' / 'any'
-    maxItems: 200,    // 单次抓取上限
+    maxItems: 200,    // 单次抓取上限（每个 source×keyword 组合）
   },
   filter:{db:'all',sigSource:'all',sigTab:'all',dbLifecycle:'all',dbSource:'all',hotTab:'mine'},
   activity:[],
@@ -3553,9 +3569,71 @@ function syncApifyConfigUI() {
       badge.textContent = '未配置';
     }
   }
+  renderKeywordChips();
 }
 
-function toggleSource(id){const s=state.sources.find(x=>x.id===id);if(s){s.active=!s.active;renderSources()}}
+// ============ Keyword Management ============
+const DEFAULT_KEYWORDS = ['caregiver','CNA','HHA','home health aide','live-in caregiver'];
+
+function renderKeywordChips() {
+  const el = document.getElementById('keyword-chips');
+  const hint = document.getElementById('scrape-combos-hint');
+  if (!el) return;
+  // 确保 queries 数组存在
+  if (!Array.isArray(state.scrapeConfig.queries)) {
+    state.scrapeConfig.queries = [...DEFAULT_KEYWORDS];
+  }
+  const kws = state.scrapeConfig.queries;
+  el.innerHTML = kws.map((kw, i) => `
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--accent-bg);color:var(--accent);border:1px solid var(--accent);border-radius:14px;font-size:12px;font-weight:500">
+      ${escapeHtml(kw)}
+      <button onclick="removeKeyword(${i})" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:0 0 0 2px;font-size:14px;line-height:1" title="移除">×</button>
+    </span>
+  `).join('') || '<span style="font-size:12px;color:var(--text-3)">（未配置关键词，点击"恢复默认"）</span>';
+  
+  // 更新组合数提示
+  if (hint) {
+    const activeSources = state.sources.filter(s => s.active).length;
+    const cityCount = state.geography?.cities?.length || 1;
+    const combos = kws.length * activeSources * cityCount;
+    hint.textContent = `= ${kws.length} 关键词 × ${activeSources} 源 × ${cityCount} 城市 = ${combos} 个任务`;
+  }
+}
+
+function addKeyword(raw) {
+  const kw = (raw || '').trim();
+  if (!kw) return;
+  if (!Array.isArray(state.scrapeConfig.queries)) state.scrapeConfig.queries = [];
+  // 去重（case-insensitive）
+  if (state.scrapeConfig.queries.some(x => x.toLowerCase() === kw.toLowerCase())) {
+    toast('该关键词已存在', 'error');
+    return;
+  }
+  if (state.scrapeConfig.queries.length >= 10) {
+    toast('关键词最多 10 个', 'error');
+    return;
+  }
+  state.scrapeConfig.queries.push(kw);
+  renderKeywordChips();
+}
+
+function removeKeyword(idx) {
+  if (!Array.isArray(state.scrapeConfig.queries)) return;
+  state.scrapeConfig.queries.splice(idx, 1);
+  renderKeywordChips();
+}
+
+function resetKeywordsDefault() {
+  state.scrapeConfig.queries = [...DEFAULT_KEYWORDS];
+  renderKeywordChips();
+}
+
+// 简单 HTML escape（避免关键词里的特殊字符破坏 DOM）
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+function toggleSource(id){const s=state.sources.find(x=>x.id===id);if(s){s.active=!s.active;renderSources();renderKeywordChips();}}
 
 // ============ Clay Pipeline ============
 
@@ -4636,16 +4714,12 @@ function parseCSVLine(line){
 //   3. 状态 SUCCEEDED 时 → fetchApifyDataset(datasetId) 拿数据
 
 // Step 1: 启动 Actor（异步）
-async function startApifyRun(sourceConfig, location) {
+// job: 可选，含 query / city；缺省走 state.scrapeConfig
+async function startApifyRun(sourceConfig, location, job) {
   const token = (state.apifyToken || '').trim();
   if (!token) throw new Error('未配置 Apify Token');
   const actorSlug = (sourceConfig.actor || 'valig/indeed-jobs-scraper').replace('/', '~');
-  const input = {
-    title: state.scrapeConfig.query || 'caregiver',
-    location: location,
-    datePosted: state.scrapeConfig.datePosted || '3',
-    limit: state.scrapeConfig.maxItems || 200,
-  };
+  const input = buildActorInput(sourceConfig, location, job);
   const url = `https://api.apify.com/v2/acts/${actorSlug}/runs?token=${encodeURIComponent(token)}`;
   const resp = await fetch(url, {
     method: 'POST',
@@ -4665,6 +4739,76 @@ async function startApifyRun(sourceConfig, location) {
     datasetId: body.data.defaultDatasetId,
     status: body.data.status,  // 通常是 'READY' 或 'RUNNING'
   };
+}
+
+// 按源构造 Actor 的 input 参数（不同 Actor schema 不同）
+function buildActorInput(sourceConfig, location, job) {
+  const query = (job && job.query) || state.scrapeConfig.queries?.[0] || 'caregiver';
+  const datePosted = (job && job.date_posted) || state.scrapeConfig.datePosted || '3';
+  const maxItems = (job && job.max_items) || state.scrapeConfig.maxItems || 200;
+  const actor = sourceConfig.actor || '';
+
+  // valig/indeed-jobs-scraper
+  if (actor.startsWith('valig/')) {
+    return {
+      title: query,
+      location: location,
+      datePosted: datePosted,
+      limit: maxItems,
+    };
+  }
+
+  // bebity/ziprecruiter-scraper
+  // Schema: { keyword, location, maxItems, ... }
+  if (actor.startsWith('bebity/')) {
+    return {
+      keyword: query,
+      location: location,
+      maxItems: maxItems,
+      proxy: { useApifyProxy: true },
+    };
+  }
+
+  // ivanvs/craigslist-scraper
+  // Schema 常见字段：startUrls + maxItems；我们用 search 查询 healthcare 分类
+  // URL 模板: https://<city-subdomain>.craigslist.org/search/hea?query=<keyword>
+  if (actor.startsWith('ivanvs/')) {
+    const subdomain = craigslistSubdomainFor(location);
+    const encoded = encodeURIComponent(query);
+    const searchUrl = `https://${subdomain}.craigslist.org/search/hea?query=${encoded}#search=1~list~0~0`;
+    return {
+      startUrls: [{ url: searchUrl }],
+      maxItems: maxItems,
+      proxyConfiguration: { useApifyProxy: true },
+    };
+  }
+
+  // 未知 actor：给一个通用结构作为兜底
+  return {
+    query: query,
+    location: location,
+    maxItems: maxItems,
+  };
+}
+
+// Craigslist 城市 → 子域名
+// 必要时可扩展更多城市
+function craigslistSubdomainFor(location) {
+  const s = (location || '').toLowerCase();
+  if (s.includes('houston')) return 'houston';
+  if (s.includes('dallas')) return 'dallas';
+  if (s.includes('austin')) return 'austin';
+  if (s.includes('san antonio')) return 'sanantonio';
+  if (s.includes('los angeles')) return 'losangeles';
+  if (s.includes('san francisco')) return 'sfbay';
+  if (s.includes('new york')) return 'newyork';
+  if (s.includes('chicago')) return 'chicago';
+  if (s.includes('phoenix')) return 'phoenix';
+  if (s.includes('miami')) return 'miami';
+  if (s.includes('seattle')) return 'seattle';
+  if (s.includes('atlanta')) return 'atlanta';
+  // 兜底：取第一个单词
+  return s.split(',')[0].replace(/\s+/g, '');
 }
 
 // Step 2: 查询 Actor 状态
@@ -4740,16 +4884,248 @@ function mapValigJobToSignal(job, sourceName) {
   };
 }
 
+// ZipRecruiter (bebity/ziprecruiter-scraper) mapper
+// 常见字段：Title / Company / Location / Salary / PostedDate / OrganicApplyUrl / Description
+function mapZipRecruiterJobToSignal(job, sourceName) {
+  const title = (job.Title || job.title || job.jobTitle || '').trim();
+  const company = (job.Company || job.company || job.companyName || '').trim();
+  const rawLoc = (job.Location || job.location || job.city || '').trim();
+  // Location 形如 "Houston, TX" 或 "Houston, TX 77001"
+  let city = '', state = '';
+  if (rawLoc) {
+    const parts = rawLoc.split(',').map(s => s.trim()).filter(Boolean);
+    city = parts[0] || '';
+    state = (parts[1] || '').split(/\s+/)[0] || '';
+  }
+  // posted_date：ZR 通常给 "3 days ago" 或 ISO；尽量解析
+  let postedDateOnly = new Date().toISOString().split('T')[0];
+  const rawPosted = job.PostedDate || job.postedDate || job.datePosted || job.posted_at || '';
+  if (rawPosted) {
+    const parsed = parseRelativeOrIsoDate(rawPosted);
+    if (parsed) postedDateOnly = parsed;
+  }
+  const salaryText = (job.Salary || job.salary || job.salaryText || '').toString().trim();
+  const url = job.OrganicApplyUrl || job.jobUrl || job.url || job.Url || '';
+
+  return {
+    company_name: company,
+    job_title: title,
+    city: city,
+    state: state,
+    source: sourceName || 'ZipRecruiter',
+    salary: salaryText,
+    url: url,
+    posted_date: postedDateOnly,
+    is_urgent_hire: false,
+    is_high_volume_hiring: false,
+    indeed_job_key: '',
+  };
+}
+
+// Craigslist (ivanvs/craigslist-scraper) mapper
+// 常见字段：title / body / price / location / timestamp / url / postingID
+// Craigslist 公司名常缺失或匿名 → 我们把 title 本身当作公司名（或 title 含的机构名）
+// body 里会有电话/邮箱 → 单独用 extractContactFromCraigslistBody() 处理
+function mapCraigslistPostToSignal(post, sourceName, fallbackCity) {
+  const title = (post.title || post.Title || '').trim();
+  const body = (post.body || post.description || post.Description || '').trim();
+  const rawLoc = (post.location || post.Location || post.city || '').trim() || fallbackCity || '';
+  
+  let city = '', state = '';
+  if (rawLoc) {
+    const parts = rawLoc.split(',').map(s => s.trim()).filter(Boolean);
+    city = parts[0] || '';
+    state = (parts[1] || '').split(/\s+/)[0] || '';
+  }
+  // 如果 rawLoc 没 state，用 fallbackCity 的 state 兜底
+  if (!state && fallbackCity) {
+    const fb = fallbackCity.split(',').map(s => s.trim());
+    state = (fb[1] || '').split(/\s+/)[0] || '';
+  }
+
+  const rawPosted = post.timestamp || post.date || post.postedDate || post.publishedDate || '';
+  let postedDateOnly = new Date().toISOString().split('T')[0];
+  if (rawPosted) {
+    const parsed = parseRelativeOrIsoDate(rawPosted);
+    if (parsed) postedDateOnly = parsed;
+  }
+
+  // Craigslist 没有公司名 → 用 title 前 60 字符代替（后面可以用 Claude API 提取公司名）
+  // 先做简单启发式：title 常见格式 "Caregiver - Sunny Home Care" → 拆出右半段
+  let company = '';
+  const dashMatch = title.match(/[-–—]\s*(.+?)(?:\s*\(|$)/);
+  if (dashMatch && dashMatch[1].length > 2 && dashMatch[1].length < 80) {
+    company = dashMatch[1].trim();
+  }
+  if (!company) {
+    // 兜底：用 "Craigslist: <title 前 40 字符>" 作为占位公司名
+    company = `[CL] ${title.slice(0, 40)}`;
+  }
+
+  return {
+    company_name: company,
+    job_title: title.slice(0, 120),  // title 可能很长，截断
+    city: city,
+    state: state,
+    source: sourceName || 'Craigslist',
+    salary: (post.price || '').toString(),
+    url: post.url || post.Url || '',
+    posted_date: postedDateOnly,
+    is_urgent_hire: false,
+    is_high_volume_hiring: false,
+    indeed_job_key: '',
+    _cl_body: body,  // 临时字段，入库前会剔除；给 contact 抽取用
+  };
+}
+
+// 统一 dispatcher：按 source 调对应 mapper
+function mapJobToSignalBySource(rawJob, job) {
+  const actor = (job.actor_slug || '').toLowerCase();
+  const sourceName = job.source_name || '';
+  if (actor.startsWith('valig/')) {
+    return mapValigJobToSignal(rawJob, sourceName);
+  }
+  if (actor.startsWith('bebity/')) {
+    return mapZipRecruiterJobToSignal(rawJob, sourceName);
+  }
+  if (actor.startsWith('ivanvs/')) {
+    return mapCraigslistPostToSignal(rawJob, sourceName, job.city);
+  }
+  // 未知源：尝试 valig 格式兜底
+  return mapValigJobToSignal(rawJob, sourceName);
+}
+
+// 解析相对时间或 ISO 时间 → YYYY-MM-DD
+function parseRelativeOrIsoDate(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  // ISO 8601
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // "X days ago" / "today" / "yesterday"
+  const now = new Date();
+  if (/today|just posted|posted today|hours? ago|minutes? ago/i.test(s)) {
+    return now.toISOString().slice(0, 10);
+  }
+  if (/yesterday/i.test(s)) {
+    const d = new Date(now.getTime() - 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  const m = s.match(/(\d+)\+?\s*day/i);
+  if (m) {
+    const d = new Date(now.getTime() - parseInt(m[1],10) * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  const m2 = s.match(/(\d+)\+?\s*week/i);
+  if (m2) {
+    const d = new Date(now.getTime() - parseInt(m2[1],10) * 7 * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  const m3 = s.match(/(\d+)\+?\s*month/i);
+  if (m3) {
+    const d = new Date(now.getTime() - parseInt(m3[1],10) * 30 * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  // 直接尝试 Date.parse
+  const t = Date.parse(s);
+  if (!isNaN(t)) return new Date(t).toISOString().slice(0, 10);
+  return null;
+}
+
+// 从 Craigslist body 提取电话/邮箱（US 格式）
+// 返回 { phones: [...], emails: [...] }
+function extractContactFromCraigslistBody(body) {
+  if (!body) return { phones: [], emails: [] };
+  const phones = [];
+  const emails = [];
+  // US 电话：优先匹配 (xxx) xxx-xxxx / xxx-xxx-xxxx / xxx.xxx.xxxx / xxxxxxxxxx
+  const phoneRe = /(?:\+?1[\s.\-]?)?\(?([2-9]\d{2})\)?[\s.\-]?(\d{3})[\s.\-]?(\d{4})\b/g;
+  let pm;
+  while ((pm = phoneRe.exec(body)) !== null) {
+    const normalized = `(${pm[1]}) ${pm[2]}-${pm[3]}`;
+    if (!phones.includes(normalized)) phones.push(normalized);
+    if (phones.length >= 5) break;  // 防爆
+  }
+  // 邮箱
+  const emailRe = /[\w\.\-\+]+@[\w\-]+\.[\w\.\-]+/g;
+  let em;
+  while ((em = emailRe.exec(body)) !== null) {
+    const addr = em[0].toLowerCase();
+    // 过滤 craigslist 自带中转邮箱噪音
+    if (addr.includes('craigslist.org')) continue;
+    if (!emails.includes(addr)) emails.push(addr);
+    if (emails.length >= 5) break;
+  }
+  return { phones, emails };
+}
+
+// 把 Craigslist body 提到的联系人写进 contacts 表
+// 每条 contact 记一个 phone 或 email；同 signal 的多条都写
+// 注意：CL contact 不一定对应 agencies 表里的机构（可能是新机构或匿名发帖）
+// 所以 agency_id 用 null，title 用 'Craigslist Contact'
+async function insertCraigslistContacts(contactInserts) {
+  if (!contactInserts.length) return 0;
+  const now = new Date().toISOString();
+  const rows = [];
+  for (const item of contactInserts) {
+    const baseCompany = item.source_company || 'Unknown';
+    const city = item.source_city || '';
+    const state = item.source_state || '';
+    // 每个电话创建一条；邮箱同理
+    const phones = item.phones || [];
+    const emails = item.emails || [];
+    const len = Math.max(phones.length, emails.length, 1);
+    for (let i = 0; i < len; i++) {
+      rows.push({
+        id: generateUUID(),
+        agency_id: null,  // CL 不一定对应已知 agency
+        first_name: 'CL',
+        last_name: `Contact ${i + 1}`,
+        title: 'Craigslist Contact',
+        email: emails[i] || null,
+        email_status: emails[i] ? 'cl_raw' : null,
+        mobile: phones[i] || null,
+        mobile_confidence: phones[i] ? 0.5 : null,  // 来自 body 的电话置信度中等
+        mobile_provider: phones[i] ? 'craigslist_body' : null,
+        enriched_at: now,
+        enriched_by: 'craigslist_scraper',
+        // 以下字段依赖 contacts 表 schema；如不存在会被忽略
+        notes: `From Craigslist post "${baseCompany}" in ${city}, ${state}. URL: ${item.source_url || ''}`,
+      });
+    }
+  }
+  if (!rows.length) return 0;
+  const { error } = await sb.from('contacts').insert(rows);
+  if (error) {
+    console.warn('CL contacts 入库失败（可能是 schema 字段不匹配）:', error.message);
+    // 降级：只写必要字段
+    const minimal = rows.map(r => ({
+      id: r.id,
+      agency_id: null,
+      first_name: r.first_name,
+      last_name: r.last_name,
+      title: r.title,
+      email: r.email,
+      mobile: r.mobile,
+    }));
+    const { error: e2 } = await sb.from('contacts').insert(minimal);
+    if (e2) {
+      console.error('CL contacts 降级入库也失败:', e2.message);
+      return 0;
+    }
+  }
+  return rows.length;
+}
+
 // ============ Scrape Jobs (Supabase Task Queue) ============
 
 // 创建一个新抓取任务到 scrape_jobs 表
-async function createScrapeJob(source, city) {
+async function createScrapeJob(source, city, query) {
   const payload = {
     source_id: source.id,
     source_name: source.name,
     actor_slug: source.actor,
     city: city,
-    query: state.scrapeConfig.query || 'caregiver',
+    query: query || 'caregiver',
     date_posted: state.scrapeConfig.datePosted || '3',
     max_items: state.scrapeConfig.maxItems || 200,
     status: 'pending',
@@ -4784,7 +5160,7 @@ async function loadActiveScrapeJobs() {
 // 启动一个任务：调 Apify + 存 runId
 async function launchScrapeJob(job, source) {
   try {
-    const result = await startApifyRun(source, job.city);
+    const result = await startApifyRun(source, job.city, job);
     await updateScrapeJob(job.id, {
       apify_run_id: result.runId,
       apify_dataset_id: result.datasetId,
@@ -4836,12 +5212,37 @@ async function tickScrapeJob(job) {
     try {
       const rawJobs = await fetchApifyDataset(job.apify_dataset_id || run.datasetId);
       const mapped = rawJobs
-        .map(j => mapValigJobToSignal(j, job.source_name))
+        .map(j => mapJobToSignalBySource(j, job))
         .filter(s => s.company_name && s.job_title);
-      
+
+      // 剥离 Craigslist 临时字段（_cl_body），并抽取 contact
+      const clContactInserts = [];
+      for (const sig of mapped) {
+        if (sig._cl_body) {
+          const { phones, emails } = extractContactFromCraigslistBody(sig._cl_body);
+          if (phones.length || emails.length) {
+            clContactInserts.push({
+              source_url: sig.url,
+              source_city: sig.city,
+              source_state: sig.state,
+              source_company: sig.company_name,
+              phones,
+              emails,
+            });
+          }
+          delete sig._cl_body;
+        }
+      }
+
       // 入库
       const result = await ingestSignals(mapped);
-      
+
+      // Craigslist 附带的 contact 另行入库（不依赖 agency 匹配）
+      let clContactCount = 0;
+      if (clContactInserts.length > 0) {
+        clContactCount = await insertCraigslistContacts(clContactInserts);
+      }
+
       await updateScrapeJob(job.id, {
         status: 'succeeded',
         scraped_count: rawJobs.length,
@@ -4849,8 +5250,9 @@ async function tickScrapeJob(job) {
         updated_count: result.updated,
         finished_at: new Date().toISOString(),
       });
-      
-      toast(`✓ ${job.city} 抓取完成：${rawJobs.length} 条（新增 ${result.inserted}）`, 'success');
+
+      const clNote = clContactCount ? `，CL contacts +${clContactCount}` : '';
+      toast(`✓ ${job.source_name} · ${job.city} · ${job.query}：${rawJobs.length} 条（新增 ${result.inserted}${clNote}）`, 'success');
       
       // 重跑匹配 + 刷新 UI
       runMatching();
@@ -5018,9 +5420,12 @@ async function runScrape(){
   if(active.length===0){toast('请启用至少一个抓取源','error');return}
   
   const hasToken = !!(state.apifyToken && state.apifyToken.trim());
-  const hasValigSource = active.some(s => (s.actor || '').startsWith('valig/'));
+  // 已知 Apify actor 前缀（有实现 mapper 的）
+  const KNOWN_ACTOR_PREFIXES = ['valig/', 'bebity/', 'ivanvs/'];
+  const isKnownActor = (a) => KNOWN_ACTOR_PREFIXES.some(p => (a || '').startsWith(p));
+  const hasApifySource = active.some(s => isKnownActor(s.actor));
   
-  if (hasValigSource && !hasToken) {
+  if (hasApifySource && !hasToken) {
     toast('请先到 Scrape Sources 页面填写 Apify Token', 'error');
     goPage('sources');
     return;
@@ -5041,24 +5446,34 @@ async function runScrape(){
       })
     : ['Houston, TX'];
   
+  // 准备关键词列表（数组；向后兼容旧的 query 单字段）
+  let queries = Array.isArray(state.scrapeConfig.queries)
+    ? state.scrapeConfig.queries.filter(q => q && q.trim())
+    : [];
+  if (queries.length === 0) {
+    queries = [state.scrapeConfig.query || 'caregiver'];
+  }
+  
   let createdCount = 0;
   let demoCount = 0;
   
   for (const src of active) {
-    const isValig = (src.actor || '').startsWith('valig/');
+    const knownActor = isKnownActor(src.actor);
     
-    if (isValig && hasToken) {
-      // 为每个城市创建一个 scrape_job
-      for (const city of cities) {
-        const job = await createScrapeJob(src, city);
-        if (job) createdCount++;
+    if (knownActor && hasToken) {
+      // 三层循环：source × query × city
+      for (const query of queries) {
+        for (const city of cities) {
+          const job = await createScrapeJob(src, city, query);
+          if (job) createdCount++;
+        }
       }
-    } else if (!isValig) {
-      // 非 valig 源 → 走 demo 模拟（同步快速返回）
+    } else if (!knownActor) {
+      // 无 mapper 的源 → demo 模拟
       const r = rng(Date.now() % 1000 + demoCount * 17);
       const count = Math.floor(r() * 15 + 10);
       const rawSigs = generateSignals(count, state.agencies, src.name, state.signals);
-      const mapped = rawSigs.map(s => ({...s}));  // 已经是 signal 格式
+      const mapped = rawSigs.map(s => ({...s}));
       await ingestSignals(mapped);
       src.posts = count;
       src.lastRun = new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
@@ -5072,8 +5487,9 @@ async function runScrape(){
   }
   
   if (createdCount > 0) {
-    toast(`✓ 已启动 ${createdCount} 个后台抓取任务（${cities.length} 城市）`, 'success');
-    logActivityToSupabase('scrape', `启动 ${createdCount} 个异步任务`, null);
+    const sourceNames = active.filter(s => isKnownActor(s.actor)).map(s => s.name).join(' + ');
+    toast(`✓ 已启动 ${createdCount} 个任务：${sourceNames} × ${queries.length} 关键词 × ${cities.length} 城市`, 'success');
+    logActivityToSupabase('scrape', `启动 ${createdCount} 个异步任务（${sourceNames}）`, null);
     // 启动轮询
     startJobPoller();
   }
@@ -5082,8 +5498,7 @@ async function runScrape(){
     // demo 数据已经入库了
     runMatching();
     updateStats();
-    const msg = `模拟 ${demoCount} 个源已完成`;
-    toast(msg, 'success');
+    toast(`模拟 ${demoCount} 个源已完成`, 'success');
   }
   
   // 导航到 Raw Signals 页（让用户看到进度）
