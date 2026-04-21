@@ -1184,13 +1184,13 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
             <div class="filter-chip" data-filter="cold" onclick="filterDB('cold')">Cold</div>
             <div style="width:1px;height:20px;background:var(--border);margin:0 4px"></div>
             <select class="geo-select" id="db-lifecycle-filter" onchange="filterDBLifecycle(this.value)" style="width:auto;padding:5px 26px 5px 10px;font-size:12px">
-              <option value="all">全部生命周期</option>
-              <option value="cold">○ Cold</option>
-              <option value="contacted">→ Contacted</option>
-              <option value="engaged">↔ Engaged</option>
-              <option value="customer">★ Customer</option>
-              <option value="vip">♛ VIP</option>
-              <option value="dnc">⊘ Do Not Contact</option>
+              <option value="all">全部状态</option>
+              <option value="cold">○ 未联系</option>
+              <option value="contacted">→ 已触达</option>
+              <option value="engaged">↔ 跟进中</option>
+              <option value="customer">★ 已签约</option>
+              <option value="vip">♛ VIP 客户</option>
+              <option value="dnc">⊘ 黑名单</option>
             </select>
             <select class="geo-select" id="db-source-filter" onchange="filterDBSource(this.value)" style="width:auto;padding:5px 26px 5px 10px;font-size:12px">
               <option value="all">全部来源</option>
@@ -2633,12 +2633,12 @@ function scoreClass(s){return s>=70?'hi':s>=40?'mid':'lo'}
 
 // ============ Lifecycle ============
 const LIFECYCLE_STAGES={
-  cold:{label:'Cold',desc:'冷线索 · 从未联系',icon:'○',canContact:true},
-  contacted:{label:'Contacted',desc:'已触达 · 等待回复',icon:'→',canContact:'cooldown'},
-  engaged:{label:'Engaged',desc:'跟进中 · BDR 在谈',icon:'↔',canContact:false},
-  customer:{label:'Customer',desc:'付费客户',icon:'★',canContact:false},
-  vip:{label:'VIP',desc:'大客户',icon:'♛',canContact:false},
-  dnc:{label:'Do Not Contact',desc:'黑名单 · 永不联系',icon:'⊘',canContact:false}
+  cold:{label:'未联系',desc:'从未联系过 · 可随时触达',icon:'○',canContact:true},
+  contacted:{label:'已触达',desc:'BDR 已联系 · 等待回复',icon:'→',canContact:'cooldown'},
+  engaged:{label:'跟进中',desc:'正在沟通 · BDR 在谈',icon:'↔',canContact:false},
+  customer:{label:'已签约',desc:'付费客户',icon:'★',canContact:false},
+  vip:{label:'VIP 客户',desc:'大客户 · 重点维护',icon:'♛',canContact:false},
+  dnc:{label:'黑名单',desc:'永不联系',icon:'⊘',canContact:false}
 };
 const COOLDOWN_DAYS=14;
 // 判定为"Hot"的信号数阈值：一家机构被 >= 这个数量的招聘信号覆盖即为 Hot Lead
