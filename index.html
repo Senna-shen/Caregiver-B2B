@@ -799,7 +799,7 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
           <div class="role-badge role-badge-admin" style="margin-top:1px">A</div>
           <div class="role-option-body">
             <div class="role-option-name">Admin</div>
-            <div class="role-option-desc">配置者 · 抓取源 · Clay Pipeline · 全部权限</div>
+            <div class="role-option-desc">配置者 · 抓取源 · Enrichment Pipeline · 全部权限</div>
           </div>
           <div class="role-option-check">✓</div>
         </div>
@@ -853,7 +853,7 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
       </div>
       <div class="nav-item" data-page="clay" data-role-show="admin">
         <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3h18v18H3z"/><path d="M3 9h18M9 21V9"/></svg>
-        Clay Pipeline
+        Enrichment Pipeline
       </div>
     </div>
     
@@ -1447,12 +1447,12 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
       </div>
     </div>
 
-    <!-- CLAY PIPELINE -->
+    <!-- ENRICHMENT PIPELINE -->
     <div class="page" data-page="clay">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Clay Pipeline <span style="font-size:13px;color:var(--text-2);font-weight:500">· 数据补全流水线</span></h1>
-          <div class="page-sub">决策者识别 · 邮箱/手机查找 · Waterfall 多源兜底 · 命中率与成本监控</div>
+          <h1 class="page-title">Enrichment Pipeline <span style="font-size:13px;color:var(--text-2);font-weight:500">· 公司与联系人信息补全</span></h1>
+          <div class="page-sub">Google Places + Facebook + 官网 + Claude + BetterContact · 多层兜底，成本可控</div>
         </div>
         <button class="btn btn-primary" onclick="runEnrichmentTest()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -1460,51 +1460,130 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
         </button>
       </div>
 
-      <!-- Section 1: Waterfall 配置 -->
+      <!-- Section 1: 4-Layer Pipeline 架构 -->
       <div class="card" style="margin-bottom:20px">
         <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
-          <span>Waterfall 配置 · 按顺序调用，直到命中</span>
-          <span class="dim" style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0">拖拽可调整顺序</span>
+          <span>4 层数据流水线 · 按顺序调用，覆盖率叠加</span>
+          <span class="dim" style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0">成本低的先跑，贵的兜底</span>
         </div>
         
         <div style="background:var(--bg-alt);border-radius:6px;padding:12px 14px;font-size:12px;color:var(--text-1);line-height:1.6;margin-bottom:16px">
-          <strong style="color:var(--text-0)">💡 工作原理</strong>：对每个待补全的联系人，按顺序调用下面的服务。
-          <strong style="color:var(--green)">一旦某个服务命中，就跳过后续。</strong>
-          这样既保证高覆盖率，又避免重复付费。
+          <strong style="color:var(--text-0)">💡 工作原理</strong>：对每家 agency（含 Hot/New Leads 以及 agencies 表里全部机构）按顺序调 4 层数据源，结果合并写回数据库。
+          <strong style="color:var(--green)">先免费/便宜层，再付费兜底</strong>，同一 agency 30 天内自动缓存不重复调用。
         </div>
-        
-        <!-- Email waterfall -->
-        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-            <div style="width:26px;height:26px;background:var(--accent);color:#fff;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">✉</div>
-            <div>
-              <div style="font-weight:600;font-size:14px">邮箱查找 Waterfall</div>
-              <div class="dim" style="font-size:11px">查找决策者企业邮箱</div>
+
+        <!-- Layer 1: Google Places -->
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="width:30px;height:30px;background:#ea4335;color:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">L1</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:14px">Google Places API</div>
+              <div class="dim" style="font-size:11px">公司基础信息：电话、地址、评分、评论、官网 URL</div>
             </div>
-            <div style="flex:1"></div>
             <div style="text-align:right">
-              <div style="font-size:11px;color:var(--text-2)">预计总命中率</div>
-              <div style="font-size:18px;font-weight:700;color:var(--green)">85%</div>
+              <div style="font-size:11px;color:var(--text-2)">覆盖率 / Coverage</div>
+              <div style="font-size:16px;font-weight:700;color:var(--green)">~95%</div>
+            </div>
+            <div style="text-align:right;min-width:70px">
+              <div style="font-size:11px;color:var(--text-2)">成本</div>
+              <div class="mono" style="font-size:13px;font-weight:600">$0/月</div>
+              <div class="dim" style="font-size:10px">$200 免费额度</div>
             </div>
           </div>
-          <div id="email-waterfall"></div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">公司电话</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">地址</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">Google 评分</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">最新 5 条评论</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">官网 URL</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">营业时间</span>
+          </div>
         </div>
-        
-        <!-- Phone waterfall -->
+
+        <!-- Layer 2: Facebook Pages -->
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="width:30px;height:30px;background:#1877f2;color:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">L2</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:14px">Facebook Pages Scraper</div>
+              <div class="dim" style="font-size:11px">小机构 FB page（Indeed/ZR 未覆盖）· Apify Actor</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:11px;color:var(--text-2)">覆盖率</div>
+              <div style="font-size:16px;font-weight:700;color:var(--green)">~70%</div>
+            </div>
+            <div style="text-align:right;min-width:70px">
+              <div style="font-size:11px;color:var(--text-2)">成本</div>
+              <div class="mono" style="font-size:13px;font-weight:600">~$7</div>
+              <div class="dim" style="font-size:10px">$10/1000 pages</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">成立年份</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">公司描述</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">Followers</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">最新动态</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">服务语种</span>
+          </div>
+        </div>
+
+        <!-- Layer 3: Website + Claude -->
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="width:30px;height:30px;background:#d97706;color:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">L3</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:14px">官网抓取 + Claude 智能提取</div>
+              <div class="dim" style="font-size:11px">fetch About/Contact 页 → Claude Haiku 提取结构化字段</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:11px;color:var(--text-2)">覆盖率</div>
+              <div style="font-size:16px;font-weight:700;color:var(--warm)">~25%</div>
+              <div class="dim" style="font-size:10px">仅 20-30% 有官网</div>
+            </div>
+            <div style="text-align:right;min-width:70px">
+              <div style="font-size:11px;color:var(--text-2)">成本</div>
+              <div class="mono" style="font-size:13px;font-weight:600">$0.50</div>
+              <div class="dim" style="font-size:10px">$0.0005/次</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">Owner 姓名</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">特色服务</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">服务语种</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">Medicare/Medicaid</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">员工数估算</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">服务范围</span>
+          </div>
+        </div>
+
+        <!-- Layer 4: BetterContact -->
         <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-            <div style="width:26px;height:26px;background:var(--warm);color:#fff;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">📱</div>
-            <div>
-              <div style="font-weight:600;font-size:14px">手机号查找 Waterfall</div>
-              <div class="dim" style="font-size:11px">查找决策者个人手机（cell phone）</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="width:30px;height:30px;background:#10b981;color:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">L4</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:14px">BetterContact · 决策者联系方式</div>
+              <div class="dim" style="font-size:11px">按 agency_name + admin 姓名查手机/邮箱/LinkedIn（waterfall 聚合 20+ 源）</div>
             </div>
-            <div style="flex:1"></div>
             <div style="text-align:right">
-              <div style="font-size:11px;color:var(--text-2)">预计总命中率</div>
-              <div style="font-size:18px;font-weight:700;color:var(--warm)">70%</div>
+              <div style="font-size:11px;color:var(--text-2)">命中率</div>
+              <div style="font-size:16px;font-weight:700;color:var(--warm)">~50%</div>
+              <div class="dim" style="font-size:10px">Home Care 场景</div>
+            </div>
+            <div style="text-align:right;min-width:70px">
+              <div style="font-size:11px;color:var(--text-2)">成本</div>
+              <div class="mono" style="font-size:13px;font-weight:600">$15/月</div>
+              <div class="dim" style="font-size:10px">Starter 200c</div>
             </div>
           </div>
-          <div id="phone-waterfall"></div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">决策者手机号</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">Work email</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">LinkedIn URL</span>
+            <span class="badge" style="background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border)">职位</span>
+          </div>
+          <div style="margin-top:10px;padding:8px 10px;background:var(--bg-alt);border-radius:5px;font-size:11px;color:var(--text-2);line-height:1.6">
+            <strong style="color:var(--text-1)">Credit 规则</strong>：1 credit = 1 email · 10 credits = 1 mobile · 未命中不扣费 · 同一查询 30 天内缓存不重复调用
+          </div>
         </div>
       </div>
 
@@ -1515,23 +1594,23 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
           <div>
             <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
-              <span style="font-size:12px;color:var(--text-2)">Credit 消耗</span>
-              <span class="mono" style="font-size:11px;color:var(--text-2)">$340 / $2,000</span>
+              <span style="font-size:12px;color:var(--text-2)">Enrichment 累计成本</span>
+              <span class="mono" style="font-size:11px;color:var(--text-2)">$0 / $85</span>
             </div>
             <div style="height:10px;background:var(--border);border-radius:5px;overflow:hidden">
-              <div style="width:17%;height:100%;background:linear-gradient(90deg,var(--green),var(--accent));border-radius:5px"></div>
+              <div style="width:0%;height:100%;background:linear-gradient(90deg,var(--green),var(--accent));border-radius:5px"></div>
             </div>
-            <div style="font-size:11px;color:var(--text-2);margin-top:6px">预计月底 <strong style="color:var(--text-0)">$820</strong> · 在预算内 ✓</div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:6px">预计月底 <strong style="color:var(--text-0)">$45-85</strong> · Apify + BC + Claude</div>
           </div>
           <div>
             <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
-              <span style="font-size:12px;color:var(--text-2)">已处理机构</span>
-              <span class="mono" style="font-size:11px;color:var(--text-2)">1,234 / 10,000</span>
+              <span style="font-size:12px;color:var(--text-2)">已 enrich 机构</span>
+              <span class="mono" style="font-size:11px;color:var(--text-2)">0 / 1,084</span>
             </div>
             <div style="height:10px;background:var(--border);border-radius:5px;overflow:hidden">
-              <div style="width:12%;height:100%;background:linear-gradient(90deg,var(--accent),var(--cool));border-radius:5px"></div>
+              <div style="width:0%;height:100%;background:linear-gradient(90deg,var(--accent),var(--cool));border-radius:5px"></div>
             </div>
-            <div style="font-size:11px;color:var(--text-2);margin-top:6px">12% 完成 · 日均 <strong style="color:var(--text-0)">~60</strong> 机构</div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:6px">0% 完成 · 等 API key 配置后开始</div>
           </div>
         </div>
         
@@ -1542,19 +1621,22 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
 
       <!-- Section 3: 命中率分析 -->
       <div class="card" style="margin-bottom:20px">
-        <div class="card-title">命中率分析 · 哪些字段最难找</div>
+        <div class="card-title">字段命中率 · 数据源归因</div>
         <div id="hitrate-analysis"></div>
         <div style="background:var(--accent-bg);border-radius:6px;padding:10px 12px;margin-top:14px;font-size:12px;color:var(--text-1);line-height:1.6">
-          <strong style="color:var(--accent)">💡 分析建议</strong>：
-          决策者姓名和邮箱命中率高（Apollo/Clay 内置覆盖好）；手机号命中率低是行业常态——home care 行业很多决策者是个体老板或小团队，Apollo 这类企业数据库覆盖差。可尝试加入 <strong>LeadMagic</strong> 或 <strong>BetterContact</strong> 提升移动端命中。
+          <strong style="color:var(--accent)">💡 数据源归因</strong>：
+          Google Places 和公司电话/地址命中率高（~95%）；手机号命中率中等（~50%，Home Care 小机构决策者 LinkedIn 覆盖差是行业常态）；
+          Owner 姓名命中率仅 25%（只有 20-30% agency 有官网）。未来可加入 BBB / LinkedIn Sales Navigator 提升。
         </div>
       </div>
 
-      <!-- Section 4: 数据源启用 -->
+      <!-- Section 4: 触发规则 -->
       <div class="card" style="margin-bottom:20px">
-        <div class="card-title">Clay 内置数据源</div>
-        <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">除了 Waterfall，Clay 还可以从这些免费/低成本源补全信息。<strong style="color:var(--text-1)">先用免费的</strong>，能解决的就不走付费 Waterfall。</div>
+        <div class="card-title">触发规则 · 何时自动 enrich</div>
         <div id="data-sources-list"></div>
+        <div style="margin-top:12px;font-size:12px;color:var(--text-2);line-height:1.6">
+          <strong style="color:var(--text-1)">缓存策略</strong>：同一 agency 30 天内不重复 enrich（通过 enrichment_log 表查询判断）· BDR 想强制刷新 → 点"重新 enrich"按钮
+        </div>
       </div>
 
       <!-- Section 5: 工作原理 -->
@@ -1564,39 +1646,51 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
           <div style="display:flex;gap:14px;margin-bottom:12px">
             <div style="width:28px;height:28px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">1</div>
             <div style="flex:1">
-              <strong style="color:var(--text-0)">触发点</strong>：Hot Leads 里的机构被标记为"待补全"，或 BDR 点击"一键补全"
+              <strong style="color:var(--text-0)">触发</strong>：Hot Lead 或 New Lead 产生时自动排队（30 秒延迟），或手动点"📋 公司详情"按钮
             </div>
           </div>
           <div style="display:flex;gap:14px;margin-bottom:12px">
             <div style="width:28px;height:28px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">2</div>
             <div style="flex:1">
-              <strong style="color:var(--text-0)">免费源优先</strong>：从公司网站爬取 About Us 页面找决策者姓名 → 从 Google Business 验证电话 → 从州 Licensing 数据库校验
+              <strong style="color:var(--text-0)">L1 Google Places</strong>：搜 {agency name + city} → 拿 place_id → 详情拿电话/地址/评分/评论/官网 URL
             </div>
           </div>
           <div style="display:flex;gap:14px;margin-bottom:12px">
             <div style="width:28px;height:28px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">3</div>
             <div style="flex:1">
-              <strong style="color:var(--text-0)">Waterfall 兜底</strong>：免费源没找到的字段，按顺序调用付费服务直到命中。邮箱走 Prospeo → Nimbler → LeadMagic；手机号走 Prospeo → Nimbler → BetterContact
+              <strong style="color:var(--text-0)">L2 Facebook</strong>：搜 {agency name} 的 FB page → Apify 抓取 → 拿描述/成立年份/动态
             </div>
           </div>
           <div style="display:flex;gap:14px;margin-bottom:12px">
             <div style="width:28px;height:28px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">4</div>
             <div style="flex:1">
-              <strong style="color:var(--text-0)">验证与评分</strong>：邮箱走 Clay 的 Email Verifier（SMTP 校验）；每个命中都带置信度（verified / likely / guessed）
+              <strong style="color:var(--text-0)">L3 Website + Claude</strong>：有官网时 fetch 首页 + /about + /contact → Claude Haiku 提取 Owner/特色/语种/Medicare 等结构化字段
             </div>
           </div>
           <div style="display:flex;gap:14px;margin-bottom:12px">
-            <div style="width:28px;height:28px;background:var(--green);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">5</div>
+            <div style="width:28px;height:28px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">5</div>
             <div style="flex:1">
-              <strong style="color:var(--text-0)">回写数据库</strong>：补全结果推回本产品的 Agency Database，BDR 可立即使用
+              <strong style="color:var(--text-0)">L4 BetterContact</strong>：用 admin 姓名（你已有 100%）+ 公司名查决策者 work email + mobile + LinkedIn · 50% 命中率
+            </div>
+          </div>
+          <div style="display:flex;gap:14px;margin-bottom:12px">
+            <div style="width:28px;height:28px;background:var(--green);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">6</div>
+            <div style="flex:1">
+              <strong style="color:var(--text-0)">合并回写</strong>：所有命中字段写入 agencies 表（17 个新字段）+ contacts 表（决策者）+ agency_reviews 表（Google 评论）
+            </div>
+          </div>
+          <div style="display:flex;gap:14px">
+            <div style="width:28px;height:28px;background:var(--warm);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">7</div>
+            <div style="flex:1">
+              <strong style="color:var(--text-0)">BDR 拿到话术</strong>：进入 Hot Lead 详情 → Claude 用 enriched 数据 + 你的 winning template 生成个性化冷邮件/电话开场
             </div>
           </div>
         </div>
         
         <div style="margin-top:18px;padding:10px 14px;background:var(--bg-alt);border-left:3px solid var(--accent);border-radius:4px;font-size:12px;color:var(--text-1);line-height:1.6">
-          <strong style="color:var(--accent)">Clay 的核心价值</strong>：你不需要分别对接 6 个 API，只需要配置一个 Clay 工作流。它是一个 orchestration 层，帮你<strong>省去数据工程的工作</strong>，把精力放在业务规则上。
+          <strong style="color:var(--accent)">为什么不用 Clay？</strong>：Clay 起步价 $185/月，适合需要 100+ providers 的大型自动化。我们的场景只需 4 层数据源，自己接 API 每月仅 $45-85，节省 60% 成本且 API 质量直接可控。
           <br><br>
-          <span class="dim">演示版使用模拟数据。正式版接入 Clay Table API 后，"试跑一次"会触发真实的补全流程。</span>
+          <span class="dim">当前演示版 UI 使用占位数据。API key 配置后，"试跑一次"会触发真实的 4 层 enrichment。</span>
         </div>
       </div>
     </div>
@@ -2278,32 +2372,32 @@ const state = {
   filter:{db:'all',sigSource:'all',sigTab:'all',dbLifecycle:'all',dbSource:'all',hotTab:'mine'},
   activity:[],
   
-  // Clay Pipeline 配置
-  emailWaterfall:[
-    {id:'prospeo',name:'Prospeo',cost:0.03,hitRate:62,enabled:true,color:'#6366f1',note:'起步价低，home care 行业覆盖好'},
-    {id:'nimbler',name:'Nimbler',cost:0.05,hitRate:45,enabled:true,color:'#0ea5e9',note:'补强 Prospeo 未命中的 LinkedIn profile'},
-    {id:'leadmagic',name:'LeadMagic',cost:0.08,hitRate:55,enabled:true,color:'#8b5cf6',note:'兜底源，价格最贵但覆盖最广'}
+  // Enrichment Pipeline 配置（4 层数据源）
+  // 用于 cost-breakdown / hitrate-analysis / data-sources-list 渲染
+  enrichmentLayers:[
+    {id:'google-places',name:'Google Places API',layer:'L1',cost:0,costNote:'$200/月免费额度内',costKey:'Google Places',hitRate:95,enabled:true,color:'#ea4335'},
+    {id:'facebook',name:'Facebook Pages (Apify)',layer:'L2',cost:0.010,costNote:'$10/1000 pages',costKey:'Facebook',hitRate:70,enabled:true,color:'#1877f2'},
+    {id:'website-claude',name:'公司官网 + Claude Haiku',layer:'L3',cost:0.0005,costNote:'$0.0005/次',costKey:'Claude API',hitRate:25,enabled:true,color:'#d97706'},
+    {id:'bettercontact',name:'BetterContact 决策者联系方式',layer:'L4',cost:0.075,costNote:'$15/月 Starter',costKey:'BetterContact',hitRate:50,enabled:true,color:'#10b981'},
   ],
-  phoneWaterfall:[
-    {id:'prospeo-mobile',name:'Prospeo Mobile',cost:0.08,hitRate:40,enabled:true,color:'#6366f1',note:'和邮箱一起查，复用 credit'},
-    {id:'nimbler-mobile',name:'Nimbler Mobile',cost:0.12,hitRate:35,enabled:true,color:'#0ea5e9',note:'美国本地号码覆盖好'},
-    {id:'bettercontact',name:'BetterContact',cost:0.15,hitRate:50,enabled:false,color:'#10b981',note:'一站式服务，内部自己做 waterfall'}
-  ],
-  dataSources:[
-    {id:'state-licensing',name:'州 Licensing 数据库',type:'免费',enabled:true,color:'#10b981',note:'德州 TULIP / 加州 CDPH 等，验证牌照和电话'},
-    {id:'google-biz',name:'Google Business',type:'免费',enabled:true,color:'#ea4335',note:'电话、营业时间、地址交叉验证'},
-    {id:'website-scrape',name:'公司网站爬取',type:'免费',enabled:true,color:'#6366f1',note:'从 About Us / Contact 页找决策者'},
-    {id:'linkedin-basic',name:'LinkedIn 基础信息',type:'付费',enabled:true,color:'#0a66c2',note:'员工规模、成立时间、融资情况'},
-    {id:'crunchbase',name:'Crunchbase',type:'付费',enabled:false,color:'#146aff',note:'小 agency 覆盖差，建议不启用'},
-    {id:'bbb',name:'Better Business Bureau',type:'免费',enabled:false,color:'#1b3a6c',note:'评级和投诉记录，参考价值有限'}
+  triggerRules:[
+    {id:'hot-lead',name:'Hot Lead 自动排队',type:'自动',enabled:true,color:'#ef4444',note:'Hot Lead 产生 30 秒后自动排队 L1→L2→L3→L4'},
+    {id:'new-lead',name:'New Lead 自动排队',type:'自动',enabled:true,color:'#f59e0b',note:'New Lead 产生 1 分钟后自动排队'},
+    {id:'manual-button',name:'手动 enrich 按钮',type:'手动',enabled:true,color:'#3b82f6',note:'BDR 在 Hot/New Leads 页点"📋 公司详情"触发'},
+    {id:'batch-refresh',name:'批量刷新（30 天过期）',type:'定时',enabled:false,color:'#8b5cf6',note:'每日凌晨检查 profile_enriched_at > 30 天的 agency，重新 enrich'},
   ],
   hitRates:{
-    decisionMaker:92,
-    companyEmail:78,
-    linkedin:67,
-    mobilePhone:52,
-    directDial:38,
-    title:89
+    companyPhone:95,        // Google Places 几乎都有
+    companyAddress:98,
+    googleRating:92,
+    companyWebsite:28,      // 只有 20-30% 有官网
+    foundedYear:35,
+    specialties:25,
+    languages:30,
+    medicareCertified:20,
+    decisionMakerMobile:50,  // BC 的 Home Care 命中
+    decisionMakerEmail:78,
+    linkedin:40,
   }
 };
 
@@ -3645,105 +3739,84 @@ function escapeHtml(s) {
 
 function toggleSource(id){const s=state.sources.find(x=>x.id===id);if(s){s.active=!s.active;renderSources();renderKeywordChips();}}
 
-// ============ Clay Pipeline ============
+// ============ Enrichment Pipeline ============
 
-function renderWaterfall(waterfall,containerId,colorAccent){
-  const el=document.getElementById(containerId);
-  if(!el)return;
-  el.innerHTML=waterfall.map((s,i)=>`
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:${s.enabled?'var(--bg)':'var(--bg-alt)'};border:1px solid ${s.enabled?'var(--border-strong)':'var(--border)'};border-radius:6px;margin-bottom:6px;opacity:${s.enabled?'1':'0.55'};transition:all 0.15s">
-      <div style="width:24px;height:24px;background:var(--bg-alt);border:1px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text-1);flex-shrink:0">${i+1}</div>
-      <div style="width:8px;height:24px;background:${s.color};border-radius:2px;flex-shrink:0"></div>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600">${s.name}</div>
-        <div class="dim" style="font-size:11px;margin-top:1px">${s.note}</div>
-      </div>
-      <div style="text-align:right">
-        <div class="mono" style="font-size:12px;color:var(--text-1)">$${s.cost.toFixed(2)}/hit</div>
-        <div class="mono" style="font-size:10px;color:var(--text-2);margin-top:1px">命中率 ${s.hitRate}%</div>
-      </div>
-      <label class="switch" style="flex-shrink:0">
-        <input type="checkbox" ${s.enabled?'checked':''} onchange="toggleWaterfallStep('${containerId}','${s.id}')">
-        <span class="slider"></span>
-      </label>
-    </div>
-  `).join('');
-}
-
-function toggleWaterfallStep(containerId,stepId){
-  const waterfall=containerId==='email-waterfall'?state.emailWaterfall:state.phoneWaterfall;
-  const s=waterfall.find(x=>x.id===stepId);
-  if(s){
-    s.enabled=!s.enabled;
-    renderClayPipeline();
-  }
-}
-
+// 渲染"触发规则"列表（原 renderDataSourcesList 的位置）
 function renderDataSourcesList(){
   const el=document.getElementById('data-sources-list');
   if(!el)return;
-  el.innerHTML=state.dataSources.map(s=>`
+  const rules = state.triggerRules || [];
+  el.innerHTML=rules.map(s=>`
     <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:${s.enabled?'var(--bg)':'var(--bg-alt)'};border:1px solid ${s.enabled?'var(--border-strong)':'var(--border)'};border-radius:6px;margin-bottom:6px;opacity:${s.enabled?'1':'0.6'};transition:all 0.15s">
-      <div style="width:32px;height:32px;background:${s.color};border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0">${s.name[0]}</div>
+      <div style="width:32px;height:32px;background:${s.color};border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0">${s.type[0]}</div>
       <div style="flex:1">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:13px;font-weight:600">${s.name}</span>
-          <span class="badge ${s.type==='免费'?'badge-new':'badge-cool'}" style="font-size:10px">${s.type}</span>
+          <span class="badge ${s.type==='自动'?'badge-new':s.type==='手动'?'badge-cool':'badge-warm'}" style="font-size:10px">${s.type}</span>
         </div>
         <div class="dim" style="font-size:11px;margin-top:2px">${s.note}</div>
       </div>
       <label class="switch" style="flex-shrink:0">
-        <input type="checkbox" ${s.enabled?'checked':''} onchange="toggleDataSource('${s.id}')">
+        <input type="checkbox" ${s.enabled?'checked':''} onchange="toggleTriggerRule('${s.id}')">
         <span class="slider"></span>
       </label>
     </div>
   `).join('');
 }
 
-function toggleDataSource(id){
-  const s=state.dataSources.find(x=>x.id===id);
+function toggleTriggerRule(id){
+  const s=(state.triggerRules||[]).find(x=>x.id===id);
   if(s){s.enabled=!s.enabled;renderDataSourcesList()}
 }
+// 保留旧名字以防其他地方还调用
+function toggleDataSource(id){toggleTriggerRule(id)}
 
+// 按 4 层 enrichment 分账显示成本
 function renderCostBreakdown(){
   const el=document.getElementById('cost-breakdown');
   if(!el)return;
-  // 模拟本月每个服务的消耗（按命中率 × 处理量 × 单价估算）
-  const monthProcessed=1234;
-  const rows=[];
-  [...state.emailWaterfall,...state.phoneWaterfall].forEach(w=>{
-    if(!w.enabled)return;
-    // 简化：每个 waterfall 的调用量 ≈ 前面都没命中 × 总量
-    const hits=Math.round(monthProcessed*0.3*(w.hitRate/100));
-    const spent=hits*w.cost;
-    rows.push({name:w.name,color:w.color,hits,spent,cost:w.cost});
+  const layers = state.enrichmentLayers || [];
+  // 当前没有真实数据（等 API key 配置后才开始烧钱），显示预估成本
+  // 预估：按 1084 家 agency 全量 enrich 一次的成本
+  const agencyCount = state.agencies.length || 1084;
+  const rows = layers.filter(l=>l.enabled).map(l=>{
+    // 覆盖率 × agency 总数 × 单次成本
+    const hits = Math.round(agencyCount * (l.hitRate/100));
+    const spent = hits * l.cost;
+    return {name:l.name, color:l.color, hits, spent, cost:l.cost, costNote:l.costNote, layer:l.layer};
   });
-  rows.sort((a,b)=>b.spent-a.spent);
+  const total = rows.reduce((s,r)=>s+r.spent, 0);
   
-  const total=rows.reduce((s,r)=>s+r.spent,0);
-  el.innerHTML=rows.map(r=>{
-    const pct=total>0?(r.spent/total*100):0;
-    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12px">
+  el.innerHTML = rows.map(r=>{
+    const pct = total>0 ? (r.spent/total*100) : 0;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12px">
       <div style="width:10px;height:10px;background:${r.color};border-radius:2px;flex-shrink:0"></div>
-      <span style="min-width:110px;font-weight:500">${r.name}</span>
+      <span style="min-width:24px;color:var(--text-2);font-size:10px;font-weight:600">${r.layer}</span>
+      <span style="min-width:180px;font-weight:500">${r.name}</span>
       <div style="flex:1;height:5px;background:var(--border);border-radius:3px;overflow:hidden">
         <div style="width:${pct}%;height:100%;background:${r.color};border-radius:3px"></div>
       </div>
-      <span class="mono dim" style="font-size:11px;min-width:110px;text-align:right">${r.hits} hits · $${r.spent.toFixed(2)}</span>
+      <span class="mono dim" style="font-size:11px;min-width:160px;text-align:right">${r.hits} hits · <strong style="color:var(--text-1)">$${r.spent.toFixed(2)}</strong></span>
     </div>`;
-  }).join('');
+  }).join('') + `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;color:var(--text-2);text-align:right">全量 enrich ${agencyCount} 家预估合计：<strong class="mono" style="color:var(--text-0);font-size:13px">$${total.toFixed(2)}</strong></div>`;
 }
 
+// 按新 hitRates 字段渲染
 function renderHitRateAnalysis(){
   const el=document.getElementById('hitrate-analysis');
   if(!el)return;
+  const hr = state.hitRates || {};
   const fields=[
-    {key:'title',label:'职位 Title',value:state.hitRates.title,note:'LinkedIn 有就能找到'},
-    {key:'decisionMaker',label:'决策者姓名',value:state.hitRates.decisionMaker,note:'Apollo/Clay 内置数据库覆盖好'},
-    {key:'companyEmail',label:'企业邮箱',value:state.hitRates.companyEmail,note:'Waterfall 兜底后命中率高'},
-    {key:'linkedin',label:'LinkedIn URL',value:state.hitRates.linkedin,note:'有些小 agency 没 LinkedIn'},
-    {key:'mobilePhone',label:'个人手机号',value:state.hitRates.mobilePhone,note:'⚠ 最难找，但最有价值'},
-    {key:'directDial',label:'直通电话',value:state.hitRates.directDial,note:'小公司多用公司主号'}
+    {key:'companyPhone',    label:'公司电话',         value:hr.companyPhone ?? 95,    note:'L1 Google Places 几乎都能拿到'},
+    {key:'companyAddress',  label:'公司地址',         value:hr.companyAddress ?? 98,  note:'L1 Google Places'},
+    {key:'googleRating',    label:'Google 评分 + 评论',value:hr.googleRating ?? 92,   note:'L1 · 用于 BDR 破冰话术'},
+    {key:'decisionMakerEmail',label:'决策者 work email',value:hr.decisionMakerEmail ?? 78,note:'L4 BetterContact 命中较好'},
+    {key:'decisionMakerMobile',label:'决策者手机号',   value:hr.decisionMakerMobile ?? 50,note:'⚠ L4 BC · Home Care 小机构偏低'},
+    {key:'linkedin',        label:'LinkedIn URL',     value:hr.linkedin ?? 40,        note:'L4 · 很多 Home Care Owner 没 LinkedIn'},
+    {key:'foundedYear',     label:'成立年份',         value:hr.foundedYear ?? 35,     note:'L2/L3 · 官网或 Facebook 能找到'},
+    {key:'specialties',     label:'特色服务',         value:hr.specialties ?? 25,     note:'L3 · 需有官网才能 Claude 提取'},
+    {key:'languages',       label:'服务语种',         value:hr.languages ?? 30,       note:'L3/L2 · 官网或 Facebook 描述'},
+    {key:'medicareCertified',label:'Medicare/Medicaid',value:hr.medicareCertified ?? 20,note:'L3 · 官网 about 页标注'},
   ];
   el.innerHTML=fields.map(f=>{
     const color=f.value>=80?'var(--green)':f.value>=60?'var(--accent)':f.value>=40?'var(--warm)':'var(--hot)';
@@ -3760,14 +3833,14 @@ function renderHitRateAnalysis(){
   }).join('');
 }
 
+// 页面入口
 function renderClayPipeline(){
-  renderWaterfall(state.emailWaterfall,'email-waterfall','var(--accent)');
-  renderWaterfall(state.phoneWaterfall,'phone-waterfall','var(--warm)');
   renderDataSourcesList();
   renderCostBreakdown();
   renderHitRateAnalysis();
 }
 
+// 模拟跑一次 4 层 enrichment
 async function runEnrichmentTest(){
   const active=state.agencies.filter(a=>getAgencyStatus(a)==='hot'&&!state.enriched.has(a.id));
   if(active.length===0){
@@ -3775,65 +3848,79 @@ async function runEnrichmentTest(){
     return;
   }
   const target=active[0];
-  showModal('Clay Pipeline 试跑','ENRICHMENT TEST');
+  showModal('Enrichment Pipeline 试跑','ENRICHMENT TEST');
   setProgress(0,'初始化…');
   logEntry(`目标机构：${target.company_name}`,0);
+  logEntry(`  地点：${target.city}, ${target.state}`,1);
+  logEntry(`  Admin：${target.admin_first_name||''} ${target.admin_last_name||''}`.trim(),1);
   await sleep(400);
   
-  // Stage 1: 免费源
-  setProgress(15,'免费源查询…');
-  logEntry('Stage 1: 免费数据源',0);
-  const activeFree=state.dataSources.filter(s=>s.enabled&&s.type==='免费');
-  for(const src of activeFree){
-    logEntry(`  ✓ ${src.name}`,1);
-    await sleep(200);
-  }
+  const layers = (state.enrichmentLayers||[]).filter(l=>l.enabled);
+  const totalLayers = layers.length || 4;
   
-  // Stage 2: Email Waterfall
-  setProgress(40,'邮箱 Waterfall…');
-  logEntry('Stage 2: 邮箱查找 Waterfall',0);
-  let emailHit=false;
-  for(const step of state.emailWaterfall.filter(s=>s.enabled)){
-    await sleep(400);
-    const hit=Math.random()<step.hitRate/100;
-    if(hit&&!emailHit){
-      logEntry(`  ✓ ${step.name}: 命中 ($${step.cost.toFixed(2)})`,1);
-      emailHit=true;
-      break;
-    }else{
-      logEntry(`  × ${step.name}: 未命中`,1);
-    }
-  }
-  
-  // Stage 3: Phone Waterfall
-  setProgress(70,'手机 Waterfall…');
-  logEntry('Stage 3: 手机号查找 Waterfall',0);
-  let phoneHit=false;
-  for(const step of state.phoneWaterfall.filter(s=>s.enabled)){
-    await sleep(400);
-    const hit=Math.random()<step.hitRate/100;
-    if(hit&&!phoneHit){
-      logEntry(`  ✓ ${step.name}: 命中 ($${step.cost.toFixed(2)})`,1);
-      phoneHit=true;
-      break;
-    }else{
-      logEntry(`  × ${step.name}: 未命中`,1);
-    }
-  }
-  
-  // Stage 4: 验证
-  setProgress(90,'邮箱 SMTP 验证…');
-  logEntry('Stage 4: 结果验证',0);
+  // Layer 1: Google Places
+  setProgress(15,'L1 Google Places…');
+  logEntry('Layer 1: Google Places API',0);
   await sleep(500);
-  if(emailHit)logEntry(`  ✓ 邮箱 SMTP 校验通过`,1);
-  setProgress(100,'完成');
+  const gplaces = Math.random() < 0.95;
+  if(gplaces){
+    logEntry(`  ✓ 公司电话、地址、评分、评论、官网 URL ($0)`,1);
+  }else{
+    logEntry(`  × 无匹配 place_id`,1);
+  }
+  
+  // Layer 2: Facebook Pages
+  setProgress(35,'L2 Facebook Pages…');
+  logEntry('Layer 2: Facebook Pages (Apify)',0);
   await sleep(600);
+  const fb = Math.random() < 0.70;
+  if(fb){
+    logEntry(`  ✓ FB page 找到：描述、followers、成立年份 ($0.01)`,1);
+  }else{
+    logEntry(`  × FB page 未找到`,1);
+  }
+  
+  // Layer 3: Website + Claude
+  setProgress(55,'L3 Website + Claude…');
+  logEntry('Layer 3: 官网抓取 + Claude Haiku',0);
+  await sleep(700);
+  const hasWebsite = Math.random() < 0.28;
+  if(hasWebsite){
+    logEntry(`  ✓ 官网 fetch 成功 → Claude 提取 Owner/特色/语种 ($0.0005)`,1);
+  }else{
+    logEntry(`  × 此 agency 无官网 (跳过)`,1);
+  }
+  
+  // Layer 4: BetterContact
+  setProgress(80,'L4 BetterContact…');
+  logEntry('Layer 4: BetterContact 决策者联系方式',0);
+  await sleep(700);
+  const bc = Math.random() < 0.50;
+  if(bc){
+    logEntry(`  ✓ 手机号 + work email + LinkedIn 命中 (10 credits)`,1);
+  }else{
+    logEntry(`  × BC 未命中 (0 credits, 不扣费)`,1);
+  }
+  
+  // 合并入库
+  setProgress(95,'合并回写数据库…');
+  logEntry('合并 4 层结果 → agencies + contacts + agency_reviews',0);
+  await sleep(400);
+  setProgress(100,'完成');
+  await sleep(500);
   closeModal();
   
-  // 真实调用补全函数
+  // 真实补全（占位：用现有 mock enrichAgency）
   enrichAgency(target.id,false);
-  logActivity(`✓ Clay 补全: ${target.company_name}`);
-  toast(`试跑完成：${target.company_name} · 邮箱 ${emailHit?'✓':'×'} · 手机 ${phoneHit?'✓':'×'}`,'success');
+  logActivity(`✓ Enrichment 试跑: ${target.company_name}`);
+  
+  const summary = [
+    gplaces?'Places ✓':'Places ×',
+    fb?'FB ✓':'FB ×',
+    hasWebsite?'Site ✓':'Site —',
+    bc?'BC ✓':'BC ×',
+  ].join(' · ');
+  toast(`试跑完成 · ${target.company_name} · ${summary}`,'success');
 }
 
 function switchHotTab(tab){
