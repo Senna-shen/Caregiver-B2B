@@ -1948,7 +1948,25 @@ async function loadAgenciesFromSupabase() {
     notes: row.notes || '',
     lifecycle_stage: row.lifecycle_stage || 'cold',
     owner: row.owner,
-    last_contacted_at: row.last_contacted_at
+    last_contacted_at: row.last_contacted_at,
+    // Enrichment 字段（由 enrich-agency-profile Edge Function 填充）
+    website: row.website,
+    google_place_id: row.google_place_id,
+    google_rating: row.google_rating,
+    google_reviews_count: row.google_reviews_count,
+    founded_year: row.founded_year,
+    employee_count: row.employee_count,
+    service_areas: row.service_areas,
+    specialties: row.specialties,
+    languages: row.languages,
+    medicare_certified: row.medicare_certified,
+    medicaid_certified: row.medicaid_certified,
+    company_phone: row.company_phone,
+    company_email: row.company_email,
+    facebook_url: row.facebook_url,
+    company_description: row.company_description,
+    profile_enriched_at: row.profile_enriched_at,
+    profile_enrichment_source: row.profile_enrichment_source,
   }));
 }
 
@@ -2179,6 +2197,12 @@ async function initFromSupabase() {
     const agencies = await loadAgenciesFromSupabase();
     if (agencies.length > 0) {
       state.agencies = agencies;
+      // 把 profile_enriched_at 同步进 state.enriched（保持老 UI 兼容）
+      agencies.forEach(a => {
+        if (a.profile_enriched_at) {
+          state.enriched.set(a.id, { enriched_at: a.profile_enriched_at });
+        }
+      });
       console.log(`✓ 已加载 ${agencies.length} 家机构`);
     }
     const signals = await loadSignalsFromSupabase();
@@ -4240,13 +4264,38 @@ function openAgencyDetail(id){
       `).join(''):'<div class="dim" style="font-size:12px;padding:8px 0">尚未补全。点击上方按钮查找决策者联系方式。</div>'}
     </div>
     
-    ${enrich?`<div class="drawer-section">
-      <div class="drawer-section-title">公司详情</div>
-      <div class="kv"><div class="kv-label">网站</div><div class="kv-val"><a href="${enrich.website}" target="_blank">${enrich.website}</a></div></div>
-      <div class="kv"><div class="kv-label">员工规模</div><div class="kv-val">${enrich.employee_count} 人</div></div>
-      <div class="kv"><div class="kv-label">成立年份</div><div class="kv-val">${enrich.founded}</div></div>
-      <div class="kv"><div class="kv-label">机构类型</div><div class="kv-val">${enrich.is_franchise?'加盟商':'独立机构'}</div></div>
-    </div>`:''}
+    ${a.profile_enriched_at?`<div class="drawer-section">
+      <div class="drawer-section-title">
+        <span>📋 公司详情</span>
+        <button class="btn btn-sm" onclick="enrichAgency('${a.id}',true)" style="padding:2px 10px;font-size:10px">🔄 刷新</button>
+      </div>
+      ${a.google_rating?`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-alt);border-radius:6px;margin-bottom:10px">
+        <span style="font-size:16px">⭐</span>
+        <div style="font-size:13px;font-weight:600">${a.google_rating} / 5.0</div>
+        <div class="dim" style="font-size:11px">${a.google_reviews_count||0} reviews</div>
+        <div style="flex:1"></div>
+        <div class="dim" style="font-size:11px">Google</div>
+      </div>`:''}
+      ${a.website?`<div class="kv"><div class="kv-label">官网</div><div class="kv-val"><a href="${a.website}" target="_blank" style="color:var(--accent);font-size:11px;word-break:break-all">${(a.website||'').replace(/^https?:\/\//,'').slice(0,60)}${a.website.length>60?'...':''}</a></div></div>`:''}
+      ${a.company_phone?`<div class="kv"><div class="kv-label">公司电话</div><div class="kv-val mono">${a.company_phone}</div></div>`:''}
+      ${a.company_email?`<div class="kv"><div class="kv-label">公司邮箱</div><div class="kv-val mono" style="font-size:11px">${a.company_email}</div></div>`:''}
+      ${a.facebook_url?`<div class="kv"><div class="kv-label">Facebook</div><div class="kv-val"><a href="${a.facebook_url}" target="_blank" style="color:var(--accent);font-size:11px">FB Page →</a></div></div>`:''}
+      ${a.founded_year?`<div class="kv"><div class="kv-label">成立年份</div><div class="kv-val">${a.founded_year} · ${new Date().getFullYear()-a.founded_year} 年</div></div>`:''}
+      ${a.employee_count?`<div class="kv"><div class="kv-label">员工规模</div><div class="kv-val">${a.employee_count}</div></div>`:''}
+      ${(a.medicare_certified||a.medicaid_certified)?`<div class="kv"><div class="kv-label">认证</div><div class="kv-val">${a.medicare_certified?'<span class="badge badge-new" style="margin-right:4px">Medicare</span>':''}${a.medicaid_certified?'<span class="badge badge-new">Medicaid</span>':''}</div></div>`:''}
+      ${(a.service_areas&&a.service_areas.length)?`<div class="kv"><div class="kv-label">服务范围</div><div class="kv-val" style="font-size:11px">${a.service_areas.slice(0,6).join(', ')}${a.service_areas.length>6?`, +${a.service_areas.length-6}`:''}</div></div>`:''}
+      ${(a.specialties&&a.specialties.length)?`<div class="kv"><div class="kv-label">特色服务</div><div class="kv-val" style="font-size:11px">${a.specialties.slice(0,5).map(s=>`<span class="badge badge-warm" style="font-size:10px;margin:1px 2px 1px 0">${s}</span>`).join('')}${a.specialties.length>5?` <span class="dim">+${a.specialties.length-5}</span>`:''}</div></div>`:''}
+      ${(a.languages&&a.languages.length)?`<div class="kv"><div class="kv-label">语种</div><div class="kv-val">${a.languages.map(l=>`<span class="badge" style="font-size:10px;background:var(--bg-alt);color:var(--text-1);border:1px solid var(--border);margin-right:4px">${l}</span>`).join('')}</div></div>`:''}
+      ${a.company_description?`<div style="margin-top:10px;padding:8px 10px;background:var(--bg-alt);border-radius:4px;font-size:11px;color:var(--text-1);line-height:1.5;font-style:italic">"${a.company_description.slice(0,280)}${a.company_description.length>280?'...':''}"</div>`:''}
+      <div class="dim" style="font-size:10px;margin-top:8px;text-align:right">Enriched ${new Date(a.profile_enriched_at).toLocaleString('zh-CN')}</div>
+    </div>`:`<div class="drawer-section">
+      <div class="drawer-section-title"><span>📋 公司详情</span></div>
+      <div style="padding:14px;background:var(--bg-alt);border-radius:6px;text-align:center">
+        <div style="font-size:12px;color:var(--text-2);margin-bottom:10px">尚未补全公司资料</div>
+        <button class="btn btn-primary btn-sm" onclick="enrichAgency('${a.id}',true)">立即补全（Google Places + Facebook + Claude 分析官网）</button>
+        <div class="dim" style="font-size:10px;margin-top:6px">预计 15-60 秒 · 成本约 $0.03</div>
+      </div>
+    </div>`}
     
     <!-- AI 能力占位（未来功能） -->
     <div class="drawer-section">
@@ -5889,33 +5938,105 @@ function addAllProspects(){
 async function enrichAgency(id,refreshDrawer=false){
   const a=state.agencies.find(x=>x.id===id);
   if(!a)return;
-  showModal('补全联系方式','WATERFALL ENRICHMENT');
-  setProgress(0,'查找决策者…');
-  logEntry('调用 Apollo People Search…',0);
-  await sleep(500);
-  logEntry('✓ 找到决策者',1);
-  setProgress(30,'邮箱 waterfall…');
-  logEntry('Findymail…',0);
-  await sleep(400);
-  logEntry('✓ 邮箱已找到',1);
-  setProgress(60,'手机号 waterfall…');
-  logEntry('Prospeo…',0);
-  await sleep(500);
-  if(Math.random()<0.55){logEntry('✓ Prospeo 命中',1)}
-  else{logEntry('✗ Prospeo 未命中',1);logEntry('Nimbler…',0);await sleep(400);logEntry('✓ Nimbler 命中',1);}
-  setProgress(90,'验证…');
-  await sleep(300);
-  logEntry('✓ 完成',1);
-  setProgress(100,'完成');
   
-  state.enriched.set(id,generateEnrichment(a));
-  await sleep(500);
-  closeModal();
-  logActivity(`✓ 补全 ${a.company_name}`);
-  updateStats();
-  if(refreshDrawer)openAgencyDetail(id);
-  renderHotList();renderDB();
-  toast('联系方式已补全','success');
+  // 调真实 Edge Function 触发 4 层 enrichment（默认 L1+L2+L3，L4 BC 暂不稳定默认关）
+  showModal('补全公司资料','PROFILE ENRICHMENT');
+  setProgress(5,'提交 enrichment 请求…');
+  logEntry(`目标：${a.company_name}`,0);
+  logEntry(`地点：${a.city}, ${a.state}`,1);
+  logEntry(`Phone：${a.phone || '无'}`,1);
+  
+  const edgeUrl = `${SUPABASE_URL}/functions/v1/enrich-agency-profile`;
+  
+  try {
+    setProgress(15,'L1 Google Places…');
+    logEntry('调用 Edge Function…',0);
+    
+    const resp = await fetch(edgeUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        agency_id: id,
+        force_fresh: refreshDrawer,  // 抽屉主动点补全时强制刷新
+        layers: ['L1','L2','L3'],    // L4 BC 暂未稳定，先不开
+      }),
+    });
+    
+    if (!resp.ok) {
+      const errText = await resp.text();
+      logEntry(`✗ HTTP ${resp.status}: ${errText.slice(0,200)}`,1);
+      setProgress(100,'失败');
+      await sleep(1500);
+      closeModal();
+      toast('补全失败：'+errText.slice(0,80),'error');
+      return;
+    }
+    
+    const data = await resp.json();
+    
+    if (!data.ok) {
+      logEntry(`✗ ${data.error || '未知错误'}`,1);
+      setProgress(100,'失败');
+      await sleep(1500);
+      closeModal();
+      toast('补全失败','error');
+      return;
+    }
+    
+    // 展示每层结果
+    setProgress(50,'数据已返回…');
+    (data.logs||[]).forEach(line => {
+      logEntry(line, line.startsWith('  ') ? 1 : 0);
+    });
+    
+    setProgress(85,'回写本地状态…');
+    
+    // 把 enriched 数据合并到本地 agency 对象（与后端 agencies 表保持一致）
+    if (data.agency) {
+      Object.assign(a, {
+        website: data.agency.website,
+        google_rating: data.agency.google_rating,
+        google_reviews_count: data.agency.google_reviews_count,
+        founded_year: data.agency.founded_year,
+        employee_count: data.agency.employee_count,
+        service_areas: data.agency.service_areas,
+        specialties: data.agency.specialties,
+        languages: data.agency.languages,
+        medicare_certified: data.agency.medicare_certified,
+        medicaid_certified: data.agency.medicaid_certified,
+        company_phone: data.agency.company_phone,
+        company_email: data.agency.company_email,
+        facebook_url: data.agency.facebook_url,
+        company_description: data.agency.company_description,
+        profile_enriched_at: data.agency.profile_enriched_at,
+      });
+    }
+    
+    // 标记 enriched（保留兼容老 UI）
+    state.enriched.set(id, { enriched_at: data.agency?.profile_enriched_at });
+    
+    setProgress(100,'完成');
+    await sleep(400);
+    closeModal();
+    
+    const hits = (data.layers_run || []).filter(l => l.hit).length;
+    const totalCost = (data.total_cost || 0).toFixed(3);
+    logActivity(`✓ 补全 ${a.company_name}（${hits} 层命中, $${totalCost}）`);
+    updateStats();
+    if(refreshDrawer) openAgencyDetail(id);
+    renderHotList(); renderDB();
+    toast(`补全成功：${hits}/${data.layers_run?.length||0} 层命中`,'success');
+    
+  } catch (e) {
+    logEntry(`✗ 异常：${String(e).slice(0,200)}`,1);
+    setProgress(100,'异常');
+    await sleep(1500);
+    closeModal();
+    toast('补全异常：'+String(e).slice(0,80),'error');
+  }
 }
 
 async function enrichAllHot(){
