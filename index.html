@@ -4082,7 +4082,12 @@ function renderHotList(){
     const score=getAgencyScore(a);
     const sigs=state.matches.get(a.id)||[];
     const enrich=state.enriched.get(a.id);
-    const contact=enrich?enrich.contacts[0]:null;
+    // 兼容两种 enrich 结构：
+    //  1. 老 mock：{contacts: [{first_name, email, mobile...}]}
+    //  2. 新 Edge Function：{enriched_at: '...'}（contacts 数据写入 agency 对象本身）
+    const contact = (enrich && Array.isArray(enrich.contacts) && enrich.contacts.length > 0)
+      ? enrich.contacts[0]
+      : null;
     const platformCount=getAgencyCrossPlatformScore(a);
     const crossPlatformBadge=platformCount>=3
       ? ` <span class="badge" style="background:#fef3c7;color:#b45309;font-weight:700" title="在 ${platformCount} 个平台发帖 · 支付能力强">🌟 ${platformCount}源</span>`
@@ -4245,23 +4250,30 @@ function openAgencyDetail(id){
     </div>
     
     <div class="drawer-section">
-      <div class="drawer-section-title"><span>决策者 & 联系方式</span>${enrich?'':`<button class="btn btn-sm btn-primary" onclick="enrichAgency('${a.id}',true)">补全</button>`}</div>
-      ${enrich?enrich.contacts.map(c=>`
-        <div class="contact-card">
-          <div class="contact-head">
-            <div>
-              <div class="contact-name">${c.first_name} ${c.last_name}</div>
-              <div class="contact-title-label">${c.title}</div>
+      <div class="drawer-section-title"><span>决策者 & 联系方式</span></div>
+      ${(() => {
+        // 从 state.enriched 老 mock 或真实查询到的 contacts
+        const mockContacts = (enrich && Array.isArray(enrich.contacts)) ? enrich.contacts : null;
+        if (mockContacts && mockContacts.length > 0) {
+          return mockContacts.map(c => `
+            <div class="contact-card">
+              <div class="contact-head">
+                <div>
+                  <div class="contact-name">${c.first_name || ''} ${c.last_name || ''}</div>
+                  <div class="contact-title-label">${c.title || ''}</div>
+                </div>
+                ${c.email_status ? `<span class="badge ${c.email_status==='verified'?'badge-new':'badge-cold'}">${c.email_status}</span>` : ''}
+              </div>
+              <div class="contact-lines">
+                ${c.email ? `<div><span class="key">EMAIL</span>${c.email}</div>` : ''}
+                ${c.linkedin ? `<div><span class="key">LINKEDIN</span>${c.linkedin}</div>` : ''}
+                ${c.mobile ? `<div class="contact-mobile"><span class="key" style="color:var(--text-3)">MOBILE</span>${c.mobile}${c.mobile_provider?` <span style="color:var(--text-3)">(${c.mobile_provider})</span>`:''}</div>` : '<div style="color:var(--text-3)"><span class="key">MOBILE</span>未找到</div>'}
+              </div>
             </div>
-            <span class="badge ${c.email_status==='verified'?'badge-new':'badge-cold'}">${c.email_status}</span>
-          </div>
-          <div class="contact-lines">
-            <div><span class="key">EMAIL</span>${c.email}</div>
-            <div><span class="key">LINKEDIN</span>${c.linkedin}</div>
-            ${c.mobile?`<div class="contact-mobile"><span class="key" style="color:var(--text-3)">MOBILE</span>${c.mobile} <span style="color:var(--text-3)">(${c.mobile_provider}, ${c.mobile_confidence}%)</span></div>`:'<div style="color:var(--text-3)"><span class="key">MOBILE</span>未找到</div>'}
-          </div>
-        </div>
-      `).join(''):'<div class="dim" style="font-size:12px;padding:8px 0">尚未补全。点击上方按钮查找决策者联系方式。</div>'}
+          `).join('');
+        }
+        return '<div class="dim" style="font-size:12px;padding:8px 0">从 contacts 表读取的决策者会显示在这里。</div>';
+      })()}
     </div>
     
     ${a.profile_enriched_at?`<div class="drawer-section">
@@ -6087,7 +6099,7 @@ function exportHot(){
     const enrich=state.enriched.get(a.id);
     const sigs=(state.matches.get(a.id)||[]).map(sid=>state.signals.find(s=>s.id===sid)).filter(Boolean);
     const jobTitles=sigs.map(s=>s.job_title).join('; ');
-    if(enrich&&enrich.contacts.length>0){
+    if(enrich && Array.isArray(enrich.contacts) && enrich.contacts.length>0){
       enrich.contacts.forEach(c=>{
         rows.push([a.company_name,a.city,a.phone,getLifecycle(a),a.owner||'',`${c.first_name} ${c.last_name}`,c.title,c.email,c.email_status,c.linkedin,c.mobile||'',sigs.length,getAgencyScore(a),jobTitles].map(v=>`"${(v||'').toString().replace(/"/g,'""')}"`).join(','));
       });
@@ -6438,7 +6450,9 @@ function renderMyHotLeads(){
     const score=getAgencyScore(a);
     const sigs=state.matches.get(a.id)||[];
     const enrich=state.enriched.get(a.id);
-    const contact=enrich?enrich.contacts[0]:null;
+    const contact = (enrich && Array.isArray(enrich.contacts) && enrich.contacts.length > 0)
+      ? enrich.contacts[0]
+      : null;
     const platformCount=getAgencyCrossPlatformScore(a);
     const crossBadge=platformCount>=3?` <span class="badge" style="background:#fef3c7;color:#b45309;font-weight:700">🌟 ${platformCount}源</span>`:platformCount===2?` <span class="badge" style="background:var(--bg-alt);color:var(--text-2);font-size:10px">2源</span>`:'';
     
