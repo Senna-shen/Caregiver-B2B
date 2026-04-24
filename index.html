@@ -1870,7 +1870,7 @@ const SUPABASE_URL = 'https://yqrfkhnzjgpicyrqyuzk.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_ICw2Q4iST8Iv9ecDtYtDqw_i52GHL4-';
 // Legacy JWT anon key — 专门给 Edge Function HTTP 调用用（Publishable key 不被 Edge Function 认）
 // 位置：Supabase Dashboard → Settings → API Keys → Legacy anon, service_role API keys → anon public
-const SUPABASE_JWT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxcmZraG56amdwaWN5cnF5dXprIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MzQ5OTQsImV4cCI6MjA5MjIxMDk5NH0.YgwNpTmWNE5BCl5qzoojFXxrYL-3InN7nAoNpgEXyXw';
+const SUPABASE_JWT_KEY = 'REPLACE_ME_WITH_LEGACY_JWT_ANON_KEY';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // UUID 生成器（现代浏览器原生支持；老浏览器走 fallback）
@@ -3637,6 +3637,8 @@ function renderProspects(){
   tbody.innerHTML=list.map(s=>{
     const timeAgo=s.posted_hours_ago<24?`${s.posted_hours_ago}h前`:`${Math.floor(s.posted_hours_ago/24)}天前`;
     const srcs=Array.from(s.sources).join(', ');
+    // CL signal 公司名是占位符，自动补全会误匹，禁用补全按钮提示 BDR 先改公司名
+    const isCLPlaceholder=s.company_name.startsWith('[CL]')||Array.from(s.sources).includes('Craigslist');
     return `<tr>
       <td>
         <div class="cell-company">
@@ -3649,7 +3651,13 @@ function renderProspects(){
       <td><span class="mono" style="font-size:11px">${srcs}</span></td>
       <td><span class="mono" style="font-size:11px;color:var(--text-1)">${timeAgo}</span></td>
       <td>
-        <button class="btn btn-primary btn-sm" onclick="addProspectGroup('${normalize(s.company_name)}')">+ 加入数据库</button>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-primary btn-sm" onclick="addProspectGroup('${normalize(s.company_name)}')">+ 加入数据库</button>
+          ${isCLPlaceholder
+            ? `<button class="btn btn-sm" disabled title="CL 信号公司名是占位符，先手动改公司名再补全" style="opacity:0.5;cursor:not-allowed">🔒 补全</button>`
+            : `<button class="btn btn-sm" onclick="addProspectAndEnrich('${normalize(s.company_name)}')" title="加入数据库并立即找电话（L1 Google Places + L2 Facebook + L3 官网抓取）">📞 加入 + 找电话</button>`
+          }
+        </div>
       </td>
     </tr>`;
   }).join('');
@@ -5959,6 +5967,129 @@ function addProspectGroup(groupKey){
     sigsToAdd.forEach(sig=>updateSignalMatch(sig));
   });
   logActivityToSupabase('prospect_add',`批量新收录: ${companyName} (${sigsToAdd.length}条)`,newAgency.id);
+  return newAgency;  // 返回新 agency，方便下一步 enrich
+}
+
+// 新 Leads: 加入数据库 + 立即触发 L1+L2+L3 补全
+// L1: Google Places 拿公司总机/评分/官网
+// L2: Facebook Search 拿 FB page + 可能的 HR 电话（没 agency.phone 时只接受 FB URL）
+// L3: Claude 从官网抽决策者姓名
+// L4 不跑：没 admin 姓名 BC 查不到人
+async function addProspectAndEnrich(groupKey){
+  const newAgency = addProspectGroup(groupKey);
+  if (!newAgency) return;
+  
+  // 等 Supabase insert 完成再触发 enrich（确保 agency_id 在数据库里存在）
+  await new Promise(r => setTimeout(r, 1500));
+  
+  const a = state.agencies.find(x => x.id === newAgency.id);
+  if (!a) return;
+  
+  await enrichAgencyWithLayers(newAgency.id, ['L1','L2','L3'], true);
+}
+
+// 带 layer 控制的 enrich 入口（默认 enrichAgency 是 L1+L2+L3）
+async function enrichAgencyWithLayers(id, layers, refreshDrawer=false){
+  const a=state.agencies.find(x=>x.id===id);
+  if(!a)return;
+  
+  showModal('补全公司资料','PROFILE ENRICHMENT');
+  setProgress(5,'提交 enrichment 请求…');
+  logEntry(`目标：${a.company_name}`,0);
+  logEntry(`地点：${a.city}, ${a.state}`,1);
+  logEntry(`Phone：${a.phone || '无（新 Lead，将用 name 搜索）'}`,1);
+  logEntry(`Layers: ${layers.join(', ')}`,1);
+  
+  const edgeUrl = `${SUPABASE_URL}/functions/v1/enrich-agency-profile`;
+  
+  try {
+    setProgress(15,'调用 Edge Function…');
+    const resp = await fetch(edgeUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_JWT_KEY}`,
+      },
+      body: JSON.stringify({
+        agency_id: id,
+        force_fresh: true,
+        layers: layers,
+      }),
+    });
+    
+    if (!resp.ok) {
+      const errText = await resp.text();
+      logEntry(`✗ HTTP ${resp.status}: ${errText.slice(0,200)}`,1);
+      setProgress(100,'失败');
+      await sleep(1500);
+      closeModal();
+      toast('补全失败：'+errText.slice(0,80),'error');
+      return;
+    }
+    
+    const data = await resp.json();
+    
+    if (!data.ok) {
+      logEntry(`✗ ${data.error || '未知错误'}`,1);
+      setProgress(100,'失败');
+      await sleep(1500);
+      closeModal();
+      toast('补全失败','error');
+      return;
+    }
+    
+    setProgress(60,'数据已返回…');
+    (data.logs||[]).forEach(line => {
+      logEntry(line, line.startsWith('  ') ? 1 : 0);
+    });
+    
+    setProgress(90,'回写本地状态…');
+    
+    if (data.agency) {
+      Object.assign(a, {
+        website: data.agency.website,
+        google_rating: data.agency.google_rating,
+        google_reviews_count: data.agency.google_reviews_count,
+        founded_year: data.agency.founded_year,
+        employee_count: data.agency.employee_count,
+        service_areas: data.agency.service_areas,
+        specialties: data.agency.specialties,
+        languages: data.agency.languages,
+        medicare_certified: data.agency.medicare_certified,
+        medicaid_certified: data.agency.medicaid_certified,
+        company_phone: data.agency.company_phone,
+        company_email: data.agency.company_email,
+        facebook_url: data.agency.facebook_url,
+        company_description: data.agency.company_description,
+        profile_enriched_at: data.agency.profile_enriched_at,
+      });
+      // L1 如果拿到了 phone，回写 agency.phone（New Leads 场景有用）
+      if (!a.phone && data.agency.company_phone) {
+        a.phone = data.agency.company_phone;
+      }
+    }
+    
+    state.enriched.set(id, { enriched_at: data.agency?.profile_enriched_at });
+    
+    setProgress(100,'完成');
+    await sleep(400);
+    closeModal();
+    
+    const hits = (data.layers_run || []).filter(l => l.hit).length;
+    const totalCost = (data.total_cost || 0).toFixed(3);
+    logActivity(`✓ 补全 ${a.company_name}（${hits} 层命中, $${totalCost}）`);
+    updateStats();
+    if(refreshDrawer) openAgencyDetail(id);
+    renderHotList(); renderDB(); renderProspects();
+    toast(`补全成功：${hits}/${data.layers_run?.length||0} 层命中`,'success');
+    
+  } catch (e) {
+    logEntry(`✗ 异常：${String(e).slice(0,200)}`,1);
+    setProgress(100,'异常');
+    await sleep(1500);
+    closeModal();
+    toast('补全异常：'+String(e).slice(0,80),'error');
+  }
 }
 
 function addAllProspects(){
