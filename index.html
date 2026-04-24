@@ -1766,6 +1766,24 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
   </div>
 </div>
 
+<!-- HITL 搜候选 Modal -->
+<div class="modal" id="hitl-modal">
+  <div class="modal-box" style="max-width:640px;max-height:80vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+      <div style="width:36px;height:36px;background:#fef3c7;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">🔍</div>
+      <div>
+        <div class="modal-title" id="hitl-modal-title" style="margin-bottom:2px">Google Maps 候选</div>
+        <div class="modal-sub" style="font-size:11px;color:var(--text-2)" id="hitl-modal-sub">为 <span id="hitl-agency-name">XXX</span> 搜到以下候选：</div>
+      </div>
+    </div>
+    <div id="hitl-candidates" style="margin-top:14px;max-height:50vh;overflow-y:auto"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+      <button class="btn" onclick="closeHitlModal()">取消</button>
+      <button class="btn btn-primary" id="hitl-confirm-btn" onclick="confirmHitlCandidate()" disabled>确认并关联</button>
+    </div>
+  </div>
+</div>
+
 <!-- Import CSV Modal -->
 <div class="modal" id="import-modal">
   <div class="modal-box" style="max-width:560px">
@@ -3404,7 +3422,10 @@ function renderDB(){
       <td>${statusBadge}</td>
       <td>${renderLifecycleChip(a,true)}${a.owner?`<div class="dim" style="font-size:10px;margin-top:3px">@${a.owner}</div>`:''}</td>
       <td><div class="score-bar"><div class="score-bar-track"><div class="score-bar-fill ${scoreClass(score)}" style="width:${score}%"></div></div><span class="score-val">${score}</span></div></td>
-      <td><div class="cell-action"><button class="icon-btn" onclick="event.stopPropagation();openAgencyDetail('${a.id}')">→</button></div></td>
+      <td><div class="cell-action" style="display:flex;gap:4px">
+        ${a.enrichment_status==='no_contact'?`<button class="icon-btn" style="color:var(--accent)" title="从 Google Maps 搜候选，手动关联" onclick="event.stopPropagation();openHitlSearch('${a.id}')">🔍</button>`:''}
+        <button class="icon-btn" onclick="event.stopPropagation();openAgencyDetail('${a.id}')">→</button>
+      </div></td>
     </tr>`;
   }).join('');
 }
@@ -3453,6 +3474,223 @@ function filterDBSource(v){
 function filterDBContact(tab){
   state.filter.dbContact=tab;
   renderDB();
+}
+
+// ============ HITL 搜候选 ============
+// 全局 state：当前打开的 agency_id 和用户选中的 place_id
+let hitlState = { agencyId: null, candidates: [], selectedPlaceId: null };
+
+async function openHitlSearch(agencyId){
+  const a = state.agencies.find(x => x.id === agencyId);
+  if (!a) return;
+  
+  hitlState = { agencyId, candidates: [], selectedPlaceId: null };
+  
+  // 打开 modal
+  document.getElementById('hitl-agency-name').textContent = a.company_name;
+  document.getElementById('hitl-candidates').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);font-size:13px">🔄 正在搜索 Google Maps…</div>';
+  document.getElementById('hitl-confirm-btn').disabled = true;
+  document.getElementById('hitl-modal').classList.add('open');
+  
+  // 调 Edge Function 搜候选
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/enrich-agency-profile`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_JWT_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        agency_id: agencyId,
+        mode: 'search_candidates',
+      }),
+    });
+    
+    if (!resp.ok) {
+      document.getElementById('hitl-candidates').innerHTML = `<div style="padding:20px;color:var(--hot);font-size:13px">✗ 搜索失败：HTTP ${resp.status}</div>`;
+      return;
+    }
+    
+    const data = await resp.json();
+    if (!data.ok) {
+      document.getElementById('hitl-candidates').innerHTML = `<div style="padding:20px;color:var(--hot);font-size:13px">✗ ${data.error || '未知错误'}</div>`;
+      return;
+    }
+    
+    const candidates = data.candidates?.results || [];
+    hitlState.candidates = candidates;
+    
+    if (candidates.length === 0) {
+      document.getElementById('hitl-candidates').innerHTML = `
+        <div style="padding:20px;color:var(--text-2);font-size:13px;text-align:center">
+          <div style="font-size:32px;opacity:0.5">○</div>
+          <div style="margin-top:8px">Google Maps 没搜到任何候选</div>
+          <div class="dim" style="font-size:11px;margin-top:4px">query: "${data.candidates?.query || ''}"</div>
+        </div>
+        <div style="margin-top:14px;padding:10px;background:var(--bg-alt);border-radius:6px">
+          <label style="display:flex;gap:8px;cursor:pointer;font-size:13px">
+            <input type="radio" name="hitl-choice" value="no_match" onchange="selectHitlChoice('no_match')">
+            <span>都不是 → 标记为永久无联系方式</span>
+          </label>
+        </div>`;
+      return;
+    }
+    
+    // 渲染候选列表
+    document.getElementById('hitl-candidates').innerHTML = candidates.map((c, i) => `
+      <label style="display:block;padding:12px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;cursor:pointer;transition:background 0.15s" 
+             onmouseover="this.style.background='var(--bg-alt)'" onmouseout="this.style.background='transparent'">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <input type="radio" name="hitl-choice" value="${i}" onchange="selectHitlChoice(${i})" style="margin-top:3px">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <div style="font-size:14px;font-weight:600">${escapeHtml(c.name)}</div>
+              ${c.rating ? `<span style="font-size:12px;color:var(--warm)">⭐ ${c.rating}</span><span class="dim" style="font-size:11px">(${c.reviews_count || 0})</span>` : ''}
+            </div>
+            ${c.phone ? `<div class="mono" style="font-size:12px;color:var(--text-1)">📞 ${escapeHtml(c.phone)}</div>` : '<div class="dim" style="font-size:11px">📞 无</div>'}
+            ${c.website ? `<div style="font-size:11px;color:var(--accent);word-break:break-all">🌐 ${escapeHtml((c.website||'').replace(/^https?:[\/][\/]/,'').slice(0,70))}</div>` : ''}
+            ${c.address ? `<div class="dim" style="font-size:11px;margin-top:2px">📍 ${escapeHtml(c.address)}</div>` : ''}
+            ${c.types?.length ? `<div style="margin-top:4px">${c.types.slice(0,3).map(t => `<span class="badge" style="font-size:9px;background:var(--bg-alt);color:var(--text-2);margin-right:3px">${t}</span>`).join('')}</div>` : ''}
+          </div>
+        </div>
+      </label>
+    `).join('') + `
+      <div style="margin-top:14px;padding:10px;background:var(--bg-alt);border-radius:6px;display:flex;flex-direction:column;gap:8px">
+        <label style="display:flex;gap:8px;cursor:pointer;font-size:13px">
+          <input type="radio" name="hitl-choice" value="no_match" onchange="selectHitlChoice('no_match')">
+          <span>都不是 → 标记为永久无联系方式</span>
+        </label>
+      </div>`;
+  } catch (e) {
+    document.getElementById('hitl-candidates').innerHTML = `<div style="padding:20px;color:var(--hot);font-size:13px">✗ 异常：${String(e).slice(0,200)}</div>`;
+  }
+}
+
+function selectHitlChoice(choice) {
+  hitlState.selectedPlaceId = choice;
+  document.getElementById('hitl-confirm-btn').disabled = false;
+}
+
+function closeHitlModal() {
+  document.getElementById('hitl-modal').classList.remove('open');
+  hitlState = { agencyId: null, candidates: [], selectedPlaceId: null };
+}
+
+async function confirmHitlCandidate() {
+  const { agencyId, candidates, selectedPlaceId } = hitlState;
+  if (!agencyId || selectedPlaceId === null) return;
+  
+  const a = state.agencies.find(x => x.id === agencyId);
+  if (!a) return;
+  
+  // 选了"都不是"
+  if (selectedPlaceId === 'no_match') {
+    // 标记 enrichment_status 保持 no_contact，只是记录时间
+    await sb.from('agencies').update({
+      profile_enriched_at: new Date().toISOString(),
+      profile_enrichment_source: 'hitl_no_match',
+    }).eq('id', agencyId);
+    a.profile_enriched_at = new Date().toISOString();
+    closeHitlModal();
+    toast('已标记：无 Google Maps 匹配', 'success');
+    renderDB();
+    return;
+  }
+  
+  // 选了某个候选
+  const chosen = candidates[selectedPlaceId];
+  if (!chosen) { closeHitlModal(); return; }
+  
+  closeHitlModal();
+  
+  // 显示补全模态
+  showModal('关联 Google Maps 数据', 'HITL LINK');
+  setProgress(10, '更新 agency…');
+  logEntry(`目标：${a.company_name}`, 0);
+  logEntry(`关联：${chosen.name}`, 1);
+  logEntry(`  phone: ${chosen.phone || '—'}`, 1);
+  logEntry(`  website: ${chosen.website || '—'}`, 1);
+  
+  try {
+    // Step 1: 更新 agency 基础字段
+    const updates = {
+      google_place_id: chosen.place_id,
+      company_phone: chosen.phone || null,
+      website: chosen.website || null,
+      google_rating: chosen.rating || null,
+      google_reviews_count: chosen.reviews_count || 0,
+      profile_enriched_at: new Date().toISOString(),
+      profile_enrichment_source: 'hitl_linked',
+      enrichment_status: (chosen.phone || chosen.website) ? 'enriched' : 'no_contact',
+    };
+    // 如果 agency 之前没 phone，用 Google 的回写
+    if (!a.phone && chosen.phone) updates.phone = chosen.phone;
+    
+    const { error: updErr } = await sb.from('agencies').update(updates).eq('id', agencyId);
+    if (updErr) {
+      logEntry(`✗ 更新 agency 失败: ${updErr.message}`, 1);
+      setProgress(100, '失败');
+      await sleep(1500);
+      closeModal();
+      toast('关联失败', 'error');
+      return;
+    }
+    
+    // 同步到前端 state
+    Object.assign(a, updates);
+    
+    setProgress(50, '跑 L2 + L3…');
+    logEntry('继续跑 L2 Facebook + L3 官网抓取…', 0);
+    
+    // Step 2: 调 Edge Function 跑 L2+L3（拿 FB page、官网抽取决策者）
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/enrich-agency-profile`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_JWT_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        agency_id: agencyId,
+        force_fresh: true,
+        layers: ['L2', 'L3'],
+      }),
+    });
+    
+    if (resp.ok) {
+      const data = await resp.json();
+      (data.logs || []).forEach(l => logEntry(l, l.startsWith('  ') ? 1 : 0));
+      if (data.agency) {
+        // 再把最新字段同步到前端 state
+        Object.assign(a, {
+          facebook_url: data.agency.facebook_url || a.facebook_url,
+          specialties: data.agency.specialties || a.specialties,
+          service_areas: data.agency.service_areas || a.service_areas,
+          languages: data.agency.languages || a.languages,
+          company_description: data.agency.company_description || a.company_description,
+          founded_year: data.agency.founded_year || a.founded_year,
+          enrichment_status: data.agency.enrichment_status,
+        });
+      }
+    }
+    
+    setProgress(100, '完成');
+    logEntry(`✓ 关联完成`, 0);
+    await sleep(600);
+    closeModal();
+    
+    logActivity(`✓ HITL 关联: ${a.company_name} → ${chosen.name}`);
+    updateStats();
+    renderDB();
+    renderHotList();
+    toast(`已关联到 "${chosen.name}"`, 'success');
+    
+  } catch (e) {
+    logEntry(`✗ 异常：${String(e).slice(0,200)}`, 1);
+    setProgress(100, '异常');
+    await sleep(1500);
+    closeModal();
+    toast('关联异常', 'error');
+  }
 }
 
 // ============ Manual Add ============
