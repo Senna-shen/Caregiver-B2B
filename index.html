@@ -6094,6 +6094,11 @@ async function enrichAgencyWithLayers(id, layers, refreshDrawer=false){
       // L1 如果拿到了 phone，回写 agency.phone（New Leads 场景有用）
       if (!a.phone && data.agency.company_phone) {
         a.phone = data.agency.company_phone;
+        // 同步到数据库
+        await sb.from('agencies')
+          .update({ phone: data.agency.company_phone })
+          .eq('id', id);
+        console.log(`✓ phone 已回写到 agencies 表: ${data.agency.company_phone}`);
       }
     }
     
