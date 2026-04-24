@@ -1870,7 +1870,7 @@ const SUPABASE_URL = 'https://yqrfkhnzjgpicyrqyuzk.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_ICw2Q4iST8Iv9ecDtYtDqw_i52GHL4-';
 // Legacy JWT anon key — 专门给 Edge Function HTTP 调用用（Publishable key 不被 Edge Function 认）
 // 位置：Supabase Dashboard → Settings → API Keys → Legacy anon, service_role API keys → anon public
-const SUPABASE_JWT_KEY = 'REPLACE_ME_WITH_LEGACY_JWT_ANON_KEY';
+const SUPABASE_JWT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxcmZraG56amdwaWN5cnF5dXprIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MzQ5OTQsImV4cCI6MjA5MjIxMDk5NH0.YgwNpTmWNE5BCl5qzoojFXxrYL-3InN7nAoNpgEXyXw';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // UUID 生成器（现代浏览器原生支持；老浏览器走 fallback）
