@@ -1175,7 +1175,7 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
       <div id="db-content-wrap">
 
       <!-- 联系方式 Tab 切换 -->
-      <div style="display:flex;gap:2px;margin-bottom:14px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;gap:2px;margin-bottom:8px;border-bottom:1px solid var(--border)">
         <div class="contact-tab" data-contact-tab="contactable" onclick="filterDBContact('contactable')"
           style="padding:10px 16px;cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);border-bottom:2px solid var(--accent);margin-bottom:-1px">
           ✓ 可联系 <span class="mono" id="contact-tab-contactable-count" style="font-weight:400;opacity:0.7">—</span>
@@ -1187,6 +1187,23 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
         <div class="contact-tab" data-contact-tab="no_contact" onclick="filterDBContact('no_contact')"
           style="padding:10px 16px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text-2);border-bottom:2px solid transparent;margin-bottom:-1px">
           ⚠️ 无联系方式 <span class="mono" id="contact-tab-no_contact-count" style="font-weight:400;opacity:0.7">—</span>
+        </div>
+      </div>
+
+      <!-- Owner Tab 切换 -->
+      <div style="display:flex;gap:2px;margin-bottom:14px;align-items:center">
+        <span style="font-size:11px;color:var(--text-2);margin-right:8px;font-weight:500">Owner：</span>
+        <div class="owner-tab" data-owner-tab="mine" onclick="filterDBOwner('mine')"
+          style="padding:6px 12px;cursor:pointer;font-size:12px;font-weight:500;color:var(--text-2);border-radius:5px;background:transparent">
+          我的 <span class="mono" id="owner-tab-mine-count" style="font-weight:400;opacity:0.7">—</span>
+        </div>
+        <div class="owner-tab" data-owner-tab="unclaimed" onclick="filterDBOwner('unclaimed')"
+          style="padding:6px 12px;cursor:pointer;font-size:12px;font-weight:500;color:var(--text-2);border-radius:5px;background:transparent">
+          无人认领 <span class="mono" id="owner-tab-unclaimed-count" style="font-weight:400;opacity:0.7">—</span>
+        </div>
+        <div class="owner-tab" data-owner-tab="all" onclick="filterDBOwner('all')"
+          style="padding:6px 12px;cursor:pointer;font-size:12px;font-weight:600;color:var(--accent);border-radius:5px;background:var(--accent-bg)">
+          全部 <span class="mono" id="owner-tab-all-count" style="font-weight:400;opacity:0.7">—</span>
         </div>
       </div>
 
@@ -2459,7 +2476,7 @@ const state = {
     datePosted: '3',  // '1' (24h) / '3' (3 days) / '7' / '14' / 'any'
     maxItems: 200,    // 单次抓取上限（每个 source×keyword 组合）
   },
-  filter:{db:'all',sigSource:'all',sigTab:'all',dbLifecycle:'all',dbSource:'all',hotTab:'mine',dbContact:'contactable'},
+  filter:{db:'all',sigSource:'all',sigTab:'all',dbLifecycle:'all',dbSource:'all',hotTab:'mine',dbContact:'contactable',dbOwner:'all'},
   activity:[],
   
   // Enrichment Pipeline 配置（4 层数据源）
@@ -3339,7 +3356,8 @@ function renderDB(){
   const filter=state.filter.db;
   const lifecycleFilter=state.filter.dbLifecycle;
   const sourceFilter=state.filter.dbSource;
-  const contactTab=state.filter.dbContact||'contactable';  // contactable(默认) / all / no_contact
+  const contactTab=state.filter.dbContact||'contactable';
+  const ownerTab=state.filter.dbOwner||'all';  // mine / unclaimed / all
   const tbody=document.getElementById('db-tbody');
   let filtered=state.agencies.filter(a=>{
     // 联系方式 tab 过滤
@@ -3348,7 +3366,14 @@ function renderDB(){
     }else if(contactTab==='no_contact'){
       if(a.enrichment_status!=='no_contact')return false;
     }
-    // contactTab==='all' 不过滤
+    
+    // Owner tab 过滤
+    if(ownerTab==='mine'){
+      if(a.owner!==state.currentUser)return false;
+    }else if(ownerTab==='unclaimed'){
+      if(a.owner)return false;
+    }
+    // ownerTab==='all' 不过滤
     
     if(kw&&!a.company_name.toLowerCase().includes(kw)&&!(a.city||'').toLowerCase().includes(kw)&&!((a.license_number||'').toLowerCase().includes(kw)))return false;
     if(filter!=='all'&&getAgencyStatus(a)!==filter)return false;
@@ -3392,6 +3417,37 @@ function renderDB(){
       el.style.color='var(--text-2)';
       el.style.fontWeight='500';
       el.style.borderBottom='2px solid transparent';
+    }
+  });
+  
+  // Owner tab 计数（基于当前 contact tab 的结果，不叠加 Owner 过滤）
+  // 即计算"这个联系方式范围内，我/无人认领/全部"各有多少
+  const contactFiltered=state.agencies.filter(a=>{
+    if(contactTab==='contactable'&&a.enrichment_status==='no_contact')return false;
+    if(contactTab==='no_contact'&&a.enrichment_status!=='no_contact')return false;
+    return true;
+  });
+  const ownerMineCount=contactFiltered.filter(a=>a.owner===state.currentUser).length;
+  const ownerUnclaimedCount=contactFiltered.filter(a=>!a.owner).length;
+  const ownerAllCount=contactFiltered.length;
+  const om=document.getElementById('owner-tab-mine-count');
+  const ou=document.getElementById('owner-tab-unclaimed-count');
+  const oa=document.getElementById('owner-tab-all-count');
+  if(om)om.textContent=`(${ownerMineCount})`;
+  if(ou)ou.textContent=`(${ownerUnclaimedCount})`;
+  if(oa)oa.textContent=`(${ownerAllCount})`;
+  
+  // Owner tab 活跃样式
+  document.querySelectorAll('.owner-tab').forEach(el=>{
+    const key=el.dataset.ownerTab;
+    if(key===ownerTab){
+      el.style.color='var(--accent)';
+      el.style.fontWeight='600';
+      el.style.background='var(--accent-bg)';
+    }else{
+      el.style.color='var(--text-2)';
+      el.style.fontWeight='500';
+      el.style.background='transparent';
     }
   });
   
@@ -3473,6 +3529,11 @@ function filterDBSource(v){
 
 function filterDBContact(tab){
   state.filter.dbContact=tab;
+  renderDB();
+}
+
+function filterDBOwner(tab){
+  state.filter.dbOwner=tab;
   renderDB();
 }
 
