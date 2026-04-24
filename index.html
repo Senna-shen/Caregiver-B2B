@@ -1174,6 +1174,22 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
 
       <div id="db-content-wrap">
 
+      <!-- 联系方式 Tab 切换 -->
+      <div style="display:flex;gap:2px;margin-bottom:14px;border-bottom:1px solid var(--border)">
+        <div class="contact-tab" data-contact-tab="contactable" onclick="filterDBContact('contactable')"
+          style="padding:10px 16px;cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);border-bottom:2px solid var(--accent);margin-bottom:-1px">
+          ✓ 可联系 <span class="mono" id="contact-tab-contactable-count" style="font-weight:400;opacity:0.7">—</span>
+        </div>
+        <div class="contact-tab" data-contact-tab="all" onclick="filterDBContact('all')"
+          style="padding:10px 16px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text-2);border-bottom:2px solid transparent;margin-bottom:-1px">
+          全部 <span class="mono" id="contact-tab-all-count" style="font-weight:400;opacity:0.7">—</span>
+        </div>
+        <div class="contact-tab" data-contact-tab="no_contact" onclick="filterDBContact('no_contact')"
+          style="padding:10px 16px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text-2);border-bottom:2px solid transparent;margin-bottom:-1px">
+          ⚠️ 无联系方式 <span class="mono" id="contact-tab-no_contact-count" style="font-weight:400;opacity:0.7">—</span>
+        </div>
+      </div>
+
       <div class="table-wrap">
         <div class="table-header">
           <div class="table-header-left">
@@ -1998,6 +2014,7 @@ async function loadAgenciesFromSupabase() {
     company_description: row.company_description,
     profile_enriched_at: row.profile_enriched_at,
     profile_enrichment_source: row.profile_enrichment_source,
+    enrichment_status: row.enrichment_status,
   }));
 }
 
@@ -2424,7 +2441,7 @@ const state = {
     datePosted: '3',  // '1' (24h) / '3' (3 days) / '7' / '14' / 'any'
     maxItems: 200,    // 单次抓取上限（每个 source×keyword 组合）
   },
-  filter:{db:'all',sigSource:'all',sigTab:'all',dbLifecycle:'all',dbSource:'all',hotTab:'mine'},
+  filter:{db:'all',sigSource:'all',sigTab:'all',dbLifecycle:'all',dbSource:'all',hotTab:'mine',dbContact:'contactable'},
   activity:[],
   
   // Enrichment Pipeline 配置（4 层数据源）
@@ -2822,6 +2839,8 @@ const HOT_SIGNAL_THRESHOLD=2;
 
 function getLifecycle(a){return a.lifecycle_stage||'cold'}
 function canContactAgency(a){
+  // 隔离：enrichment_status='no_contact' 的不能联系（没找到任何电话/邮箱）
+  if(a.enrichment_status==='no_contact')return false;
   const stage=getLifecycle(a);
   const def=LIFECYCLE_STAGES[stage];
   if(!def||def.canContact===false)return false;
@@ -3302,8 +3321,17 @@ function renderDB(){
   const filter=state.filter.db;
   const lifecycleFilter=state.filter.dbLifecycle;
   const sourceFilter=state.filter.dbSource;
+  const contactTab=state.filter.dbContact||'contactable';  // contactable(默认) / all / no_contact
   const tbody=document.getElementById('db-tbody');
   let filtered=state.agencies.filter(a=>{
+    // 联系方式 tab 过滤
+    if(contactTab==='contactable'){
+      if(a.enrichment_status==='no_contact')return false;
+    }else if(contactTab==='no_contact'){
+      if(a.enrichment_status!=='no_contact')return false;
+    }
+    // contactTab==='all' 不过滤
+    
     if(kw&&!a.company_name.toLowerCase().includes(kw)&&!(a.city||'').toLowerCase().includes(kw)&&!((a.license_number||'').toLowerCase().includes(kw)))return false;
     if(filter!=='all'&&getAgencyStatus(a)!==filter)return false;
     if(lifecycleFilter!=='all'&&getLifecycle(a)!==lifecycleFilter)return false;
@@ -3323,6 +3351,31 @@ function renderDB(){
   filtered=filtered.slice(0,200);
   
   document.getElementById('db-count').textContent=`${filtered.length} / ${state.agencies.length} 条`;
+  
+  // 3 个联系方式 tab 的计数
+  const total=state.agencies.length;
+  const noContactCount=state.agencies.filter(a=>a.enrichment_status==='no_contact').length;
+  const contactableCount=total-noContactCount;
+  const c1=document.getElementById('contact-tab-contactable-count');
+  const c2=document.getElementById('contact-tab-all-count');
+  const c3=document.getElementById('contact-tab-no_contact-count');
+  if(c1)c1.textContent=`(${contactableCount})`;
+  if(c2)c2.textContent=`(${total})`;
+  if(c3)c3.textContent=`(${noContactCount})`;
+  
+  // 活跃 tab 高亮
+  document.querySelectorAll('.contact-tab').forEach(el=>{
+    const key=el.dataset.contactTab;
+    if(key===contactTab){
+      el.style.color='var(--accent)';
+      el.style.fontWeight='600';
+      el.style.borderBottom='2px solid var(--accent)';
+    }else{
+      el.style.color='var(--text-2)';
+      el.style.fontWeight='500';
+      el.style.borderBottom='2px solid transparent';
+    }
+  });
   
   if(filtered.length===0){
     tbody.innerHTML=`<tr><td colspan="7"><div class="empty"><div class="empty-icon">∅</div><div class="empty-text">没有数据</div><div class="empty-sub">先去 Import Data 导入机构名单</div></div></td></tr>`;
@@ -3394,6 +3447,11 @@ function filterDBLifecycle(v){
 
 function filterDBSource(v){
   state.filter.dbSource=v;
+  renderDB();
+}
+
+function filterDBContact(tab){
+  state.filter.dbContact=tab;
   renderDB();
 }
 
@@ -4199,7 +4257,13 @@ async function openAgencyDetail(id){
   }
   
   document.getElementById('drawer-title').textContent=a.company_name;
-  document.getElementById('drawer-subtitle').textContent=`${a.city} · ${a.license_number||'无牌照'}`;
+  const subtitleEl=document.getElementById('drawer-subtitle');
+  const subtitleText=`${a.city} · ${a.license_number||'无牌照'}`;
+  if(a.enrichment_status==='no_contact'){
+    subtitleEl.innerHTML=`${subtitleText} <span style="background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;margin-left:8px;font-family:var(--sans)">⚠️ 无联系方式</span>`;
+  }else{
+    subtitleEl.textContent=subtitleText;
+  }
   
   // Lifecycle 面板
   const stage=getLifecycle(a);
@@ -6090,6 +6154,7 @@ async function enrichAgencyWithLayers(id, layers, refreshDrawer=false){
         facebook_url: data.agency.facebook_url,
         company_description: data.agency.company_description,
         profile_enriched_at: data.agency.profile_enriched_at,
+        enrichment_status: data.agency.enrichment_status,
       });
       // L1 如果拿到了 phone，回写 agency.phone（New Leads 场景有用）
       if (!a.phone && data.agency.company_phone) {
@@ -6220,6 +6285,7 @@ async function enrichAgency(id,refreshDrawer=false){
         facebook_url: data.agency.facebook_url,
         company_description: data.agency.company_description,
         profile_enriched_at: data.agency.profile_enriched_at,
+        enrichment_status: data.agency.enrichment_status,
       });
     }
     
