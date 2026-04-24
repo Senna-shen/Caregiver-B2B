@@ -1870,7 +1870,7 @@ const SUPABASE_URL = 'https://yqrfkhnzjgpicyrqyuzk.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_ICw2Q4iST8Iv9ecDtYtDqw_i52GHL4-';
 // Legacy JWT anon key — 专门给 Edge Function HTTP 调用用（Publishable key 不被 Edge Function 认）
 // 位置：Supabase Dashboard → Settings → API Keys → Legacy anon, service_role API keys → anon public
-const SUPABASE_JWT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxcmZraG56amdwaWN5cnF5dXprIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MzQ5OTQsImV4cCI6MjA5MjIxMDk5NH0.YgwNpTmWNE5BCl5qzoojFXxrYL-3InN7nAoNpgEXyXw';
+const SUPABASE_JWT_KEY = 'REPLACE_ME_WITH_LEGACY_JWT_ANON_KEY';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // UUID 生成器（现代浏览器原生支持；老浏览器走 fallback）
@@ -4143,11 +4143,24 @@ function renderHotList(){
 }
 
 // ============ Drawer ============
-function openAgencyDetail(id){
+async function openAgencyDetail(id){
   const a=state.agencies.find(x=>x.id===id);
   if(!a)return;
   const enrich=state.enriched.get(id);
   const sigs=(state.matches.get(id)||[]).map(sid=>state.signals.find(s=>s.id===sid)).filter(Boolean);
+  
+  // 从 Supabase 查这个 agency 的所有 contacts（决策者 + 招聘负责人，title 区分）
+  let agencyContacts = [];
+  try {
+    const { data, error } = await sb
+      .from('contacts')
+      .select('first_name, last_name, title, email, email_status, mobile, mobile_confidence, mobile_provider, linkedin, enriched_at, enriched_by')
+      .eq('agency_id', id)
+      .order('enriched_at', { ascending: false, nullsFirst: false });
+    if (!error && data) agencyContacts = data;
+  } catch (e) {
+    console.warn('Failed to load contacts for agency:', e);
+  }
   
   document.getElementById('drawer-title').textContent=a.company_name;
   document.getElementById('drawer-subtitle').textContent=`${a.city} · ${a.license_number||'无牌照'}`;
@@ -4253,29 +4266,45 @@ function openAgencyDetail(id){
     </div>
     
     <div class="drawer-section">
-      <div class="drawer-section-title"><span>决策者 & 联系方式</span></div>
+      <div class="drawer-section-title"><span>决策者 & 招聘负责人</span><span class="dim" style="font-size:11px;font-weight:400">${agencyContacts.length} 人</span></div>
       ${(() => {
-        // 从 state.enriched 老 mock 或真实查询到的 contacts
-        const mockContacts = (enrich && Array.isArray(enrich.contacts)) ? enrich.contacts : null;
-        if (mockContacts && mockContacts.length > 0) {
-          return mockContacts.map(c => `
-            <div class="contact-card">
-              <div class="contact-head">
-                <div>
-                  <div class="contact-name">${c.first_name || ''} ${c.last_name || ''}</div>
-                  <div class="contact-title-label">${c.title || ''}</div>
-                </div>
-                ${c.email_status ? `<span class="badge ${c.email_status==='verified'?'badge-new':'badge-cold'}">${c.email_status}</span>` : ''}
-              </div>
-              <div class="contact-lines">
-                ${c.email ? `<div><span class="key">EMAIL</span>${c.email}</div>` : ''}
-                ${c.linkedin ? `<div><span class="key">LINKEDIN</span>${c.linkedin}</div>` : ''}
-                ${c.mobile ? `<div class="contact-mobile"><span class="key" style="color:var(--text-3)">MOBILE</span>${c.mobile}${c.mobile_provider?` <span style="color:var(--text-3)">(${c.mobile_provider})</span>`:''}</div>` : '<div style="color:var(--text-3)"><span class="key">MOBILE</span>未找到</div>'}
-              </div>
-            </div>
-          `).join('');
+        if (!agencyContacts || agencyContacts.length === 0) {
+          return '<div class="dim" style="font-size:12px;padding:8px 0">未找到联系人。点击"📋 公司详情"补全可从官网 About/Team 页抓取决策者。</div>';
         }
-        return '<div class="dim" style="font-size:12px;padding:8px 0">从 contacts 表读取的决策者会显示在这里。</div>';
+        // 按 title 关键词智能分组（同一人只归到"决策层"如果两边都沾）
+        const isDecision = (t) => /owner|ceo|president|founder|operator|administrator|executive|managing|director of (nursing|operations|care)|\bdon\b|clinical director|medical director/i.test(t || '');
+        const isRecruiter = (t) => /hr |human resources|recruiter|recruit|talent|staffing|intern coordinator|hiring manager/i.test(t || '');
+        const decisionMakers = agencyContacts.filter(c => isDecision(c.title) || !isRecruiter(c.title));  // 未知 title 默认归决策层
+        const recruiters = agencyContacts.filter(c => !isDecision(c.title) && isRecruiter(c.title));
+
+        const renderCard = (c) => `
+          <div class="contact-card">
+            <div class="contact-head">
+              <div>
+                <div class="contact-name">${escapeHtml(c.first_name || '')} ${escapeHtml(c.last_name || '')}</div>
+                <div class="contact-title-label">${escapeHtml(c.title || '—')}</div>
+              </div>
+              ${c.enriched_by ? `<span class="badge" style="background:var(--bg-alt);color:var(--text-2);font-size:10px">${c.enriched_by === 'claude_website' ? '🌐 官网' : c.enriched_by === 'bettercontact' ? '📱 BC' : c.enriched_by}</span>` : ''}
+            </div>
+            <div class="contact-lines">
+              ${c.email ? `<div><span class="key">EMAIL</span>${escapeHtml(c.email)}</div>` : ''}
+              ${c.linkedin ? `<div><span class="key">LINKEDIN</span><a href="${escapeHtml(c.linkedin)}" target="_blank" style="color:var(--accent);font-size:11px">${escapeHtml(c.linkedin).replace(/^https?:\/\//,'').slice(0,45)}</a></div>` : ''}
+              ${c.mobile ? `<div class="contact-mobile"><span class="key" style="color:var(--text-3)">MOBILE</span>${escapeHtml(c.mobile)}${c.mobile_provider?` <span style="color:var(--text-3)">(${escapeHtml(c.mobile_provider)})</span>`:''}</div>` : ''}
+              ${!c.email && !c.linkedin && !c.mobile ? '<div style="color:var(--text-3);font-size:11px">暂无联系方式，可用 BetterContact 补齐手机</div>' : ''}
+            </div>
+          </div>
+        `;
+
+        let html = '';
+        if (decisionMakers.length > 0) {
+          html += `<div style="font-size:11px;color:var(--text-2);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin:4px 0 6px">🎯 决策层 (${decisionMakers.length})</div>`;
+          html += decisionMakers.map(renderCard).join('');
+        }
+        if (recruiters.length > 0) {
+          html += `<div style="font-size:11px;color:var(--text-2);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">📋 招聘负责人 (${recruiters.length})</div>`;
+          html += recruiters.map(renderCard).join('');
+        }
+        return html;
       })()}
     </div>
     
