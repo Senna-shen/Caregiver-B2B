@@ -1180,10 +1180,6 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
           style="padding:10px 16px;cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);border-bottom:2px solid var(--accent);margin-bottom:-1px">
           ✓ 可联系 <span class="mono" id="contact-tab-contactable-count" style="font-weight:400;opacity:0.7">—</span>
         </div>
-        <div class="contact-tab" data-contact-tab="all" onclick="filterDBContact('all')"
-          style="padding:10px 16px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text-2);border-bottom:2px solid transparent;margin-bottom:-1px">
-          全部 <span class="mono" id="contact-tab-all-count" style="font-weight:400;opacity:0.7">—</span>
-        </div>
         <div class="contact-tab" data-contact-tab="no_contact" onclick="filterDBContact('no_contact')"
           style="padding:10px 16px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text-2);border-bottom:2px solid transparent;margin-bottom:-1px">
           ⚠️ 无联系方式 <span class="mono" id="contact-tab-no_contact-count" style="font-weight:400;opacity:0.7">—</span>
@@ -3395,15 +3391,13 @@ function renderDB(){
   
   document.getElementById('db-count').textContent=`${filtered.length} / ${state.agencies.length} 条`;
   
-  // 3 个联系方式 tab 的计数
+  // 2 个联系方式 tab 的计数
   const total=state.agencies.length;
   const noContactCount=state.agencies.filter(a=>a.enrichment_status==='no_contact').length;
   const contactableCount=total-noContactCount;
   const c1=document.getElementById('contact-tab-contactable-count');
-  const c2=document.getElementById('contact-tab-all-count');
   const c3=document.getElementById('contact-tab-no_contact-count');
   if(c1)c1.textContent=`(${contactableCount})`;
-  if(c2)c2.textContent=`(${total})`;
   if(c3)c3.textContent=`(${noContactCount})`;
   
   // 活跃 tab 高亮
