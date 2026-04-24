@@ -1868,9 +1868,37 @@ html,body{background:var(--bg);color:var(--text-0);font-family:var(--sans);font-
 // ============ Supabase ============
 const SUPABASE_URL = 'https://yqrfkhnzjgpicyrqyuzk.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_ICw2Q4iST8Iv9ecDtYtDqw_i52GHL4-';
-// Legacy JWT anon key — 专门给 Edge Function HTTP 调用用（Publishable key 不被 Edge Function 认）
+
+// Legacy JWT anon key — 给 Edge Function HTTP 调用用（Publishable key 不被 Edge Function 认）
+// 存在 localStorage 里，第一次用时提示输入，以后永久保存
 // 位置：Supabase Dashboard → Settings → API Keys → Legacy anon, service_role API keys → anon public
-const SUPABASE_JWT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxcmZraG56amdwaWN5cnF5dXprIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MzQ5OTQsImV4cCI6MjA5MjIxMDk5NH0.YgwNpTmWNE5BCl5qzoojFXxrYL-3InN7nAoNpgEXyXw';
+let SUPABASE_JWT_KEY = localStorage.getItem('SUPABASE_JWT_KEY') || '';
+
+// 如果 JWT 还没配置，暴露一个全局方法让用户随时通过 Console 设置
+window.setSupabaseJwtKey = function(key) {
+  if (!key || !key.startsWith('eyJ') || key.length < 100) {
+    console.error('❌ 无效的 JWT key。应该以 eyJ 开头，长度 200+。去 Supabase → Settings → API Keys → Legacy anon, service_role API keys → anon public 复制。');
+    return false;
+  }
+  localStorage.setItem('SUPABASE_JWT_KEY', key);
+  SUPABASE_JWT_KEY = key;
+  console.log('✓ JWT key 已保存到 localStorage。刷新页面或直接用。');
+  return true;
+};
+
+// 如果没配置，控制台输出提示
+if (!SUPABASE_JWT_KEY) {
+  console.warn(
+    '⚠️ SUPABASE_JWT_KEY 未配置。Edge Function 调用会失败。\n' +
+    '请按以下步骤配置（一次性）：\n' +
+    '1. 访问 Supabase Dashboard → Settings → API Keys\n' +
+    '2. 切换到 "Legacy anon, service_role API keys" tab\n' +
+    '3. 复制 anon (public) key（以 eyJ 开头的长字符串）\n' +
+    '4. 在 Console 跑: setSupabaseJwtKey("eyJhbGci...")\n' +
+    '5. 刷新页面'
+  );
+}
+
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // UUID 生成器（现代浏览器原生支持；老浏览器走 fallback）
